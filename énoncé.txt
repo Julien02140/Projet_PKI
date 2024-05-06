@@ -13,9 +13,10 @@ Vendeur : on lui vend un certif
 Un client, qui se connecte au vendeur, le vendeur lui envoi son certificat
 le client doit vérifier si le certificat est révoqué, si il est valide :
 Etablir des scénarios sur 3 clients par ex :
-1)Vérifier simplement le certificat
-2) Même que 1, mais vérifie si le certificat est révoqué.
-3) Même que 2, et il se rend compte que le vendeur est révoqué.
+
+1. Vérifier simplement le certificat
+2. Même que 1, mais vérifie si le certificat est révoqué.
+3. Même que 2, et il se rend compte que le vendeur est révoqué.
 
 Il est conseillé d'avoir un vendeur (1 non révoquer, et 1 qui est révoqué)
 Echange sécurisé, échange aux socket. <- peut être par fil MQTT.

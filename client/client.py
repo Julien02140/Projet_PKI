@@ -35,7 +35,7 @@ with open("csr.pem", "wb") as f:
 mqtt_broker_address = "194.57.103.203"
 mqtt_broker_port = 1883
 mqtt_client_id = "ca_client_julien_hugo"
-topic = "vehicule/JH"
+topic = f"vehicule/JH/client" # ajouter le numéro de client en argument
 
 USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
 
@@ -44,11 +44,18 @@ if USE_VERSION2_CALLBACKS:
 else:
     client = mqtt.Client(mqtt_client_id)
 
-print("connecting to broker")
+def on_message(client, userdata, msg):
+    print("Message reçu sur le sujet/topic "+msg.topic+": "+str(msg.payload.decode()))
+    # nb_message_recu = nb_message_recu + 1
+    # print("nb message recu = ", nb_message_recu)
 
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe(topic)
+
+client.on_connect = on_connect
+client.on_message = on_message
 if client.connect("194.57.103.203",1883,60) != 0:
     print("Problème de connexion avec le broker")
 
-client.publish(topic, "test1")
-print("envoie message test 1")
 client.loop_forever()
