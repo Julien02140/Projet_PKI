@@ -5,9 +5,9 @@ Simulation d'une CA :
 -On lui demande de nous dire si un certificat est révoqué.
 -Créer sa paire de clés, génère son certificat auto signé.
 -Utilisation de X509; Sha256; 2048 octets.
--On lui insère des certificats révoqué pour alimenter sa CRL
+-On lui insère des certificats révoqué pour alimenter sa CRL (Certificate Revocation List)
 
-Scénarion :
+Scénario :
 
 Vendeur : on lui vend un certif
 Un client, qui se connecte au vendeur, le vendeur lui envoi son certificat

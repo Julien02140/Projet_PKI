@@ -11,8 +11,6 @@ if USE_VERSION2_CALLBACKS:
 else:
     client = mqtt.Client(client_id=mqtt_client_id)
 
-
-
 if client.connect("194.57.103.203",1883,60) != 0:
     print("Problème de connexion avec le broker")
 

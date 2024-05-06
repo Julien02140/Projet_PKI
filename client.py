@@ -1,47 +1,31 @@
-from paho.mqtt import client as mqtt_client
-import random
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
+client_IP = '18.224.18.158'
+client_name = "client1"
 
-# Définir les informations du broker MQTT
-broker = "194.57.103.203"
-port = 1883
-topic = "vehicule"
-client_id = f'publish-{random.randint(0, 1000)}'
+# Générer une paire de clés RSA pour le client
+key = rsa.generate_private_key(
+    public_exponent=65537,
+    key_size=2048,
+)
 
-def connect_mqtt():
-    def on_connect(client, userdata, flags, rc):
-    # For paho-mqtt 2.0.0, you need to add the properties parameter.
-    # def on_connect(client, userdata, flags, rc, properties):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-        else:
-            print("Failed to connect, return code %d\n", rc)
-    # Set Connecting Client ID
-    client = mqtt_client.Client(client_id)
+name = x509.Name([
+    x509.NameAttribute(NameOID.COMMON_NAME, client_name)
+])
 
-    # For paho-mqtt 2.0.0, you need to set callback_api_version.
-    # client = mqtt_client.Client(client_id=client_id, callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2)
+# Créer une demande de signature de certificat (CSR)
+csr = (
+    x509.CertificateSigningRequestBuilder()
+        .subject_name(name).sign(key, hashes.SHA256())
+)
 
-    # client.username_pw_set(username, password)
-    client.on_connect = on_connect
-    client.connect(broker, port)
-    return client
+# Exporter le CSR au format PEM
+csr_pem = csr.public_bytes(serialization.Encoding.PEM)
 
-# Fonction de rappel pour la réception de messages
-def subscribe(client: mqtt_client):
-    def on_message(client, userdata, msg):
-        print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
-
-    client.subscribe(topic)
-    client.on_message = on_message
-
-def run():
-    client = connect_mqtt()
-    client.loop_start()
-    subscribe(client)
-    client.loop_stop()
-
-if __name__ == '__main__':
-    run()
-
-
+# Enregistrer le CSR dans un fichier
+with open("csr.pem", "wb") as f:
+    f.write(csr_pem)
