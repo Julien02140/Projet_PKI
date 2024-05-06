@@ -86,6 +86,7 @@ else:
 # Connexion au broker MQTT avec TLS/SSL
 print("connecting to broker")
 #client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
+#client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
 #client.tls_insecure_set(True)
 if client.connect("194.57.103.203",1883,60) != 0:
     print("Problème de connexion avec le broker")
