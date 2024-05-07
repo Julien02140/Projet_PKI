@@ -50,7 +50,6 @@ def generate_certif(vendeur):
             .add_extension(x509.SubjectAlternativeName(alt_names), False)
             .sign(key, hashes.SHA256(), default_backend)    
     )
-
     my_cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM)
     my_key_pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -90,7 +89,8 @@ if USE_VERSION2_CALLBACKS:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
 else:
     client = mqtt.Client(mqtt_client_id)  
-
+    
+generate_certif("ca")
 # Connexion au broker MQTT avec TLS/SSL
 #client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
 #client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
@@ -98,13 +98,15 @@ else:
 
 
 def on_message(client, userdata, msg):
-    message = f'vendeur{msg.payload.decode()}'
-    # print("Message reçu sur le sujet/topic "+msg.topic+": "+str(msg.payload.decode()))
-    print(f"Message reçu de {message}")
-    my_cert_pem = generate_certif(message)
-    client.publish(f"vehicule/JH/{message}",my_cert_pem)
-    # nb_message_recu = nb_message_recu + 1
-    # print("nb message recu = ", nb_message_recu)
+    received_data = msg.payload.decode().split(',')
+    type_demande = received_data[0]
+    contenu = received_data[1]
+    if type_demande == 'demande_certificat':
+        print(f"Message reçu de {contenu}")
+        contenu = f'vendeur{contenu}'
+        my_cert_pem = generate_certif(contenu)
+        client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
+
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
