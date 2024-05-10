@@ -4,14 +4,17 @@
 #mais pour le projet, on utilise des fils mqtt
 import paho.mqtt.client as mqtt
 import paho.mqtt
-import ssl, time, inspect, os
+import ssl, time, inspect, os, json
 from datetime import datetime, timezone, timedelta
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa,padding
 from cryptography.hazmat.backends import default_backend
+from cryptography.exceptions import InvalidSignature
+from cryptography.x509 import load_pem_x509_certificate
+
 
 #server_IP = '18.224.18.157'
 server_name = 'ca_server_julien_hugo'
@@ -19,7 +22,7 @@ server_name = 'ca_server_julien_hugo'
 
 
 # nb_message_recu = 0
-def generate_certif(vendeur):
+def generate_certif_ca():
     key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=2048,
@@ -27,7 +30,7 @@ def generate_certif(vendeur):
     )
 
     name = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, vendeur)
+        x509.NameAttribute(NameOID.COMMON_NAME, 'ca')
     ])
 
     alt_names = [x509.DNSName(server_name)]
@@ -45,7 +48,7 @@ def generate_certif(vendeur):
             .public_key(key.public_key())
             .serial_number(1000)
             .not_valid_before(now)
-            .not_valid_after(now + timedelta(days=365)) #valide pendant un an
+            .not_valid_after(now + timedelta(days=365))
             .add_extension(basic_contraints,True)
             .add_extension(x509.SubjectAlternativeName(alt_names), False)
             .sign(key, hashes.SHA256(), default_backend)    
@@ -63,18 +66,76 @@ def generate_certif(vendeur):
     if not os.path.exists("pem"):
         os.makedirs("pem")
 
-    with open(f'certificat/cert_{vendeur}.crt', 'wb') as c:
+    with open(f'certificat/cert_ca.crt', 'wb') as c:
         c.write(my_cert_pem)
 
-    with open(f'key/key_{vendeur}.key', 'wb') as c:
+    with open(f'key/key_ca.key', 'wb') as c:
         c.write(my_key_pem)
 
     #on doit aussi creer un fichier pem
     #ce fichier contient le certificat et la clé privée
-    with open(f'pem/cert_{vendeur}.pem','wb') as c:
+    with open(f'pem/cert_ca.pem','wb') as c:
         c.write(my_cert_pem)
         c.write(my_key_pem) 
-    return my_cert_pem
+
+def verify_signature(csr_file):
+    csr = x509.load_pem_x509_csr(csr_file, default_backend())
+    # Obtenir la signature et les informations de la demande de certificat
+    signature = csr.signature
+    tbs_certificate_bytes = csr.tbs_certrequest_bytes
+
+    # Vérifier la signature
+    try:
+        csr.public_key().verify(
+            signature,
+            tbs_certificate_bytes,
+            padding.PKCS1v15(),  # Utiliser le même padding que lors de la signature
+            csr.signature_hash_algorithm,
+        )
+        return True  # La signature est valide
+    except InvalidSignature:
+        return False  # La signature est invalide
+
+
+def emit_certificate(csr_bytes,id):
+    # Charger la clé privée de la CA
+    with open("pem/cert_ca.pem", "rb") as f:
+        ca_cert_pem = f.read()
+    with open("key/key_ca.key", "rb") as f:
+        ca_key_pem = f.read()
+    ca_private_key = serialization.load_pem_private_key(
+        ca_key_pem,
+        password=None,
+        backend=default_backend()
+    )
+
+    # Charger le CSR
+    csr = x509.load_pem_x509_csr(csr_bytes, default_backend())
+
+    # Charger le certificat de la CA
+    ca_cert = x509.load_pem_x509_certificate(ca_cert_pem, default_backend())
+    alt_names = [x509.DNSName(server_name)]
+    basic_contraints = x509.BasicConstraints(ca=True, path_length=None)
+    now = datetime.now(timezone.utc)
+    # Signer le CSR avec la clé privée de la CA pour émettre le certificat
+    cert = (
+        x509.CertificateBuilder()
+            .subject_name(csr.subject)
+            .issuer_name(ca_cert.subject)
+            .public_key(csr.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=365))
+            .add_extension(basic_contraints,True)
+            .add_extension(x509.SubjectAlternativeName(alt_names), False)
+            .sign(ca_private_key, hashes.SHA256(), default_backend())
+    )
+
+    # Retourner le certificat émis
+    cert = cert.public_bytes(serialization.Encoding.PEM)
+    with open(f'pem/cert_{id}.key', 'wb') as c:
+        c.write(cert)
+    return cert
 
 # Paramètres MQTT
 mqtt_broker_address = "194.57.103.203"
@@ -90,7 +151,7 @@ if USE_VERSION2_CALLBACKS:
 else:
     client = mqtt.Client(mqtt_client_id)  
     
-generate_certif("ca")
+generate_certif_ca()
 # Connexion au broker MQTT avec TLS/SSL
 #client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
 #client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
@@ -98,14 +159,35 @@ generate_certif("ca")
 
 
 def on_message(client, userdata, msg):
-    received_data = msg.payload.decode().split(',')
-    type_demande = received_data[0]
-    contenu = received_data[1]
-    if type_demande == 'demande_certificat':
-        print(f"Message reçu de {contenu}")
-        contenu = f'vendeur{contenu}'
-        my_cert_pem = generate_certif(contenu)
-        client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
+    json_data = msg.payload.decode('utf-8')
+    message = json.loads(json_data)
+    if message['type'] == 'demande_connexion':
+        print("common\n")
+        reponse = {'type': 'connexion_acceptee'}
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+    elif message['type'] == 'demande_certificat':
+        print("common\n")
+        csr = message.get('csr', None)
+        csr = eval(csr.encode('utf-8'))
+        if verify_signature(csr):
+            cert = str(emit_certificate(csr,message['id']))
+            reponse = {
+                'type': 'envoi_certificat',
+                'certificat': cert
+            }
+            json_data = json.dumps(reponse)
+            client.publish(f"vehicule/JH/{message['id']}",json_data)
+        else: 
+            print('Erreur avec la signature')
+    # received_data = msg.payload.decode().split(',')
+    # type_demande = received_data[0]
+    # contenu = received_data[1]
+    # if type_demande == 'demande_certificat':
+    #     print(f"Message reçu de {contenu}")
+    #     contenu = f'vendeur{contenu}'
+    #     my_cert_pem = generate_certif(contenu)
+    #     client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
 
 
 def on_connect(client, userdata, flags, reason_code, properties):

@@ -117,5 +117,12 @@ pub = ext_pub(x,y)
 message = ("demande de certif",priv)
 chif_asym(message,pub,message')
 
+Demande de certificat par le vendeur : Le vendeur soumet une demande de certificat à la CA. Cette demande peut être initiée manuellement par le vendeur ou automatisée via un processus en ligne.
+Validation de l'identité du vendeur par la CA : La CA vérifie l'identité du vendeur en demandant des informations d'identification et en effectuant des vérifications. Cela peut inclure la vérification des documents d'entreprise, des preuves de propriété de domaine, des vérifications téléphoniques, etc.
+Génération de la paire de clés : Le vendeur génère une paire de clés cryptographiques, composée d'une clé privée et d'une clé publique. La clé privée est gardée secrète et utilisée pour signer numériquement des données, tandis que la clé publique est incluse dans le certificat et est utilisée par les autres parties pour vérifier les signatures.
+Création de la demande de certificat : Le vendeur génère une demande de certificat (CSR - Certificate Signing Request) qui inclut des informations d'identification du vendeur ainsi que sa clé publique. Cette demande est signée avec la clé privée du vendeur pour prouver son origine.
+Soumission de la demande à la CA : Le vendeur soumet la demande de certificat à la CA. Cela peut être fait en envoyant le CSR par e-mail, via un formulaire web ou à travers un autre canal sécurisé.
+Émission du certificat par la CA : Une fois que la CA a vérifié et approuvé la demande, elle émet un certificat numérique pour le vendeur. Ce certificat inclut les informations d'identification du vendeur, sa clé publique et est signé numériquement par la CA.
+Installation du certificat par le vendeur : Le vendeur installe le certificat sur son système ou son serveur. Cela lui permet d'utiliser sa clé privée correspondante pour signer numériquement des données et prouver son identité lors de communications ultérieures avec la CA, d'autres vendeurs ou des clients.
 
 
