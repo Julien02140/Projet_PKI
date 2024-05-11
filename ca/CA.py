@@ -191,6 +191,29 @@ def verify_signature(csr_file):
     except InvalidSignature:
         return False  # La signature est invalide
 
+def add_certificat_crl(cert):
+    with open("crl.pem", "rb") as f:
+        crl = f.read()
+    crl = x509.load_pem_x509_crl(crl, default_backend())
+    builder = x509.CertificateRevocationListBuilder(crl)
+    
+    builder = builder.add_revoked_certificate(cert)
+
+    with open("key_ca.key", "rb") as f:
+        ca_key_pem = f.read()
+    
+    ca_private_key = serialization.load_pem_private_key(
+        ca_key_pem,
+        password=None,
+        backend=default_backend()
+    )
+
+    crl = builder.sign(private_key=ca_private_key, algorithm=hashes.SHA256(), backend=default_backend())
+
+    crl_serialize = crl.public_bytes(serialization.Encoding.PEM)
+
+    with open("crl.pem", "wb") as f:
+        f.write(crl_serialize)
 
 def emit_certificate(csr_bytes,id):
     # Charger la clé privée de la CA
@@ -279,6 +302,13 @@ def emit_certificate(csr_bytes,id):
     return cert_bytes
     
 generate_certif_ca()
+
+#generer un dossier crl et un fichier vide pour la crl
+if not os.path.exists("crl"):
+    os.makedirs("crl")
+
+with open("crl/crl.pem", "wb") as f:
+    pass
 # Connexion au broker MQTT avec TLS/SSL
 #client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
 #client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
