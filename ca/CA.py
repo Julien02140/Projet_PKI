@@ -218,7 +218,7 @@ def emit_certificate(csr_bytes,id):
     basic_contraints = x509.BasicConstraints(ca=True, path_length=None)
     now = datetime.now(timezone.utc)
     # Signer le CSR avec la clé privée de la CA pour émettre le certificat
-    cert = (
+    cert_build = (
         x509.CertificateBuilder()
             .subject_name(csr.subject)
             .issuer_name(ca_cert.subject)
@@ -228,14 +228,31 @@ def emit_certificate(csr_bytes,id):
             .not_valid_after(now + timedelta(days=365))
             .add_extension(basic_contraints,True)
             .add_extension(x509.SubjectAlternativeName(alt_names), False)
-            .sign(private_key, hashes.SHA256(), default_backend())
+            #.sign(private_key, hashes.SHA256(), default_backend())
     )
 
+    cert = cert_build.sign(private_key, hashes.SHA256(), default_backend())
+
+      
+    # with open("key/key_ca.key", "rb") as f:
+    #     ca_key = f.read()
+
+    # private_key = serialization.load_pem_private_key(ca_key, password=None)
+    # signature = private_key.sign(
+    #     cert.encode('utf-8'),
+    #     padding.PSS(
+    #         mgf=padding.MGF1(hashes.SHA256()),
+    #         salt_length=padding.PSS.MAX_LENGTH
+    #     ),
+    #     hashes.SHA256()
+    # )
+
+
     # Retourner le certificat émis
-    cert = cert.public_bytes(serialization.Encoding.PEM)
+    cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
     with open(f'pem/cert_{id}.key', 'wb') as c:
-        c.write(cert)
-    return cert
+        c.write(cert_bytes)
+    return cert_bytes
     
 generate_certif_ca()
 # Connexion au broker MQTT avec TLS/SSL

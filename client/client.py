@@ -74,10 +74,12 @@ def on_message(client, userdata, msg):
 
     if message['type'] == 'retour_demande_de_certificat':
         print(f"certificat reçu de la part du {message['id']}")
-        cert = message.get('certificat',None)
-        cert = cert.encode('utf-8')
+        cert_str = message.get('certificat',None)
+        cert_encode = cert_str.encode('utf-8')
         with open(f'cert_{message["id"]}.pem', 'wb') as c:
-            c.write(cert)
+            c.write(cert_encode)
+        
+        cert = x509.load_pem_x509_certificate(cert_encode, default_backend())
 
         bool = verify_certificate(cert)
         if bool == True:
@@ -114,9 +116,9 @@ def validate_certificate(cert_pem, ca_cert_pem):
 # # Enregistrer le CSR dans un fichier
 # with open("csr.pem", "wb") as f:
 #     f.write(csr_pem)
-def verify_certificate(cert_pem):
+def verify_certificate(cert):
     # Charger le certificat à valider
-    cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
+    #cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
     
     # Vérifier si le certificat est encore valide
     # now = datetime.now(timezone.utc)
@@ -140,9 +142,10 @@ def verify_certificate(cert_pem):
             padding.PKCS1v15(),
             cert.signature_hash_algorithm,
         )
+        return True
     except Exception as e:
-        return False, f"La signature du certificat n'est pas valide : {e}"
-    return True, "Le certificat est valide."
+        print(f"Erreur lors de la vérification de la signature : {e}")
+        return False  # La signature est invalide 
 
 client.on_connect = on_connect
 client.on_message = on_message
