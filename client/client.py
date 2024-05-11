@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from datetime import datetime, timezone, timedelta
 import sys,os,json
 import base64
+import time
 
 client_name = "client1"
 
@@ -158,6 +159,23 @@ if not os.path.exists("trusted"):
 if not os.path.exists("rejected"):
     os.makedirs("rejected")
 
+def envoyer_messages():
+    message_ca = {
+        'type': 'demande_cle_publique_ca',
+        'id': f'client{numero_client}' 
+    }
+    json_data = json.dumps(message_ca)
+    client.publish(topic_ca, json_data)
+
+    time.sleep(3)
+
+    message_vendeur = {
+        'type': 'demande_certificat_vendeur',
+        'id': f'client{numero_client}'
+    }
+    json_data_vendeur = json.dumps(message_vendeur)
+    client.publish(topic_vendeur1, json_data_vendeur)
+
 
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
 # message_ca = {
@@ -168,11 +186,19 @@ if not os.path.exists("rejected"):
 # json_data = json.dumps(message_ca)
 # client.publish(topic_ca,json_data)
 
-message_vendeur = {
-    'type': 'demande_certificat_vendeur',
-    'id': f'client{numero_client}'
-}
-json_data_vendeur = json.dumps(message_vendeur)
-client.publish(topic_vendeur1,json_data_vendeur)
+# time.sleep(5)
 
-client.loop_forever()
+# message_vendeur = {
+#     'type': 'demande_certificat_vendeur',
+#     'id': f'client{numero_client}'
+# }
+# json_data_vendeur = json.dumps(message_vendeur)
+# client.publish(topic_vendeur1,json_data_vendeur)
+
+client.loop_start()
+
+envoyer_messages()
+
+time.sleep(10)
+
+client.loop_stop()

@@ -82,6 +82,7 @@ def on_message(client, userdata, msg):
         reponse = {'type': 'connexion_acceptee'}
         json_data = json.dumps(reponse)
         client.publish(f"vehicule/JH/{message['id']}",json_data)
+        print("envoie connexion actepte à vendeur")
     elif message['type'] == 'demande_certificat':
         print(f"demande de certificat de la part du {message['id']} \n")
         csr = message.get('csr', None)
@@ -202,6 +203,29 @@ def emit_certificate(csr_bytes,id):
     #     password=None,
     #     backend=default_backend()
     # )
+
+    # Générer une nouvelle clé RSA, pour simuler une signature falsifié
+    private_key_false = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    # Sérialiser la clé privée au format PEM
+    private_key_pem_false = private_key_false.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    # Enregistrer la clé privée dans un fichier
+    with open("private_key_false.pem", "wb") as f:
+        f.write(private_key_pem_false)
+    
+    with open("private_key_false.pem", "rb") as f:
+        false_key = f.read()
+
+    private_key_false = serialization.load_pem_private_key(false_key, password=None)
+
 
     with open("key/key_ca.key", "rb") as f:
         ca_key = f.read()
