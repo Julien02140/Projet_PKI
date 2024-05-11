@@ -18,9 +18,14 @@ if client.connect("194.57.103.203",1883,60) != 0:
 def on_message(client, userdata, msg):
     print("Message reçu sur le sujet/topic "+msg.topic+": "+str(msg.payload.decode()))
 
-client.subscribe("vehicule/JH")
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe("vehicule/JH")
+
+#client.subscribe("vehicule/JH")
 
 client.on_message = on_message
+client.on_connect = on_connect
 
 print("commence à écouter")
 

@@ -15,6 +15,56 @@ topic = f"vehicule/JH/vendeur{numero_vendeur}" # ajouter le numéro de client en
 topic_ca = "vehicule/JH/ca"
 topic_client = "vehicule/JH/client"
 
+USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
+
+if USE_VERSION2_CALLBACKS:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
+else:
+    client = mqtt.Client(mqtt_client_id)
+
+if client.connect(mqtt_broker_address,mqtt_broker_port,60) != 0:
+    print("Problème de connexion avec le broker")
+
+def on_message(client, userdata, msg):
+    json_data = msg.payload.decode('utf-8')
+    message = json.loads(json_data)
+    if message['type'] == 'connexion_acceptee':
+        print("connexion accepté reçu\n")
+        print("génération du csr et envoie du csr à la CA")
+        generate_csr()
+        with open(f"csr_vendeur{numero_vendeur}.pem", "rb") as f:
+            contenu = str(f.read())
+        reponse = {
+            'type': 'demande_certificat',
+            'id': f'vendeur{numero_vendeur}',
+            'csr': contenu
+        }
+        json_data = json.dumps(reponse)
+        client.publish(topic_ca,json_data)
+    if message['type'] == 'envoi_certificat':
+        print("certificat recu de la part de la CA \n")
+        cert = message.get('certificat', None)
+        cert = eval(cert.encode('utf-8'))
+        with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
+            f.write(cert)
+
+    # received_data = msg.payload.decode().split(',')
+    # type_demande = received_data[0]
+    # contenu = received_data[1]
+
+    # if type_demande == 'retour_certificat':
+    #     print("Message reçu sur le sujet/topic "+msg.topic)
+    #     with open(f'cert_vendeur{numero_vendeur}.crt', 'wb') as c:
+    #         c.write(contenu)
+    # elif type_demande == 'demande_certificat':
+    #     with open(f'cert_vendeur{numero_vendeur}.crt', 'r') as f:
+    #         certificat = f.read()
+    #         client.publish(topic_client+contenu, ','.join(map(str, ['retour_certificat',certificat])))
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe(topic)
+
 def generate_csr():
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -53,59 +103,9 @@ def generate_csr():
     with open(f"public_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(public_key_pem)
 
-USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
 
-if USE_VERSION2_CALLBACKS:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
-else:
-    client = mqtt.Client(mqtt_client_id)
-
-def on_message(client, userdata, msg):
-    json_data = msg.payload.decode('utf-8')
-    message = json.loads(json_data)
-    if message['type'] == 'connexion_acceptee':
-        print("common\n")
-        generate_csr()
-        with open(f"csr_vendeur{numero_vendeur}.pem", "rb") as f:
-            contenu = str(f.read())
-        reponse = {
-            'type': 'demande_certificat',
-            'id': f'vendeur{numero_vendeur}',
-            'csr': contenu
-        }
-        json_data = json.dumps(reponse)
-        client.publish(topic_ca,json_data)
-    if message['type'] == 'envoi_certificat':
-        print("common\n")
-        cert = message.get('certificat', None)
-        cert = eval(cert.encode('utf-8'))
-        with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
-            f.write(cert)
-
-    # received_data = msg.payload.decode().split(',')
-    # type_demande = received_data[0]
-    # contenu = received_data[1]
-
-    # if type_demande == 'retour_certificat':
-    #     print("Message reçu sur le sujet/topic "+msg.topic)
-    #     with open(f'cert_vendeur{numero_vendeur}.crt', 'wb') as c:
-    #         c.write(contenu)
-    # elif type_demande == 'demande_certificat':
-    #     with open(f'cert_vendeur{numero_vendeur}.crt', 'r') as f:
-    #         certificat = f.read()
-    #         client.publish(topic_client+contenu, ','.join(map(str, ['retour_certificat',certificat])))
-
-
-    
-
-def on_connect(client, userdata, flags, reason_code, properties):
-    print("Connecté au broker MQTT avec le code de retour:", reason_code)
-    client.subscribe(topic)
-
-client.on_connect = on_connect
 client.on_message = on_message
-if client.connect("194.57.103.203",1883,60) != 0:
-    print("Problème de connexion avec le broker")
+client.on_connect = on_connect
 
 # client.publish(topic_ca, ','.join(map(str, ['demande_certificat',numero_vendeur])))
 message = {
@@ -114,4 +114,7 @@ message = {
 }
 json_data = json.dumps(message)
 client.publish(topic_ca,json_data)
+
+print(f"démarrage vendeur {numero_vendeur}")
+
 client.loop_forever()

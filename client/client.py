@@ -7,9 +7,80 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from datetime import datetime, timezone, timedelta
-import sys
+import sys, json
+import base64
 
 client_name = "client1"
+
+# Paramètres MQTT
+numero_client = sys.argv[1]
+mqtt_broker_address = "194.57.103.203"
+mqtt_broker_port = 1883
+mqtt_client_id = "ca_client_julien_hugo"
+topic = f"vehicule/JH/client{numero_client}" # ajouter le numéro de client en argument
+topic_vendeur1 = "vehicule/JH/vendeur1"
+topic_ca = "vehicule/JH/ca"
+
+USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
+
+if USE_VERSION2_CALLBACKS:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
+else:
+    client = mqtt.Client(mqtt_client_id)
+
+if client.connect("194.57.103.203",1883,60) != 0:
+    print("Problème de connexion avec le broker")
+
+def on_message(client, userdata, msg):
+    json_data = msg.payload.decode('utf-8')
+    message = json.loads(json_data)
+    if message['type'] == 'retour_cle_publique_ca':
+        print("cle publique de la CA reçu")
+        public_key = message.get('public_key', None)
+        public_key = public_key.encode('utf-8')
+        with open(f"public_key_ca.pem", "wb") as f:
+            f.write(public_key)
+        reponse = {
+            'type': 'test_public_key',
+            'id': f'client{numero_client}'
+        }
+        json_data = json.dumps(reponse)
+        client.publish(topic_ca,json_data)
+    if message['type'] == 'retour_test_public_key':
+        print("message chiffre pour test reçu \n")
+        msg = message['content']
+        print(f"message reçu : {message['content']} \n")
+        signature = message['signature']
+        signature = base64.b64decode(signature)
+
+        with open("public_key_ca.pem", "rb") as f:
+            ca_public_key = f.read()
+        
+        ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
+        
+        try:
+            ca_public_key.verify(
+                signature,
+                msg.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            print("La signature est valide.")
+        except:
+            print("La signature est invalide.")     
+
+
+    if message['type'] == 'retour_certificat_vendeur':
+        print(f"certificat reçu de la part du {message['id']}")
+        cert = message.get('certificat',None)
+        verify_certificate(cert)
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe(topic)
 
 
 def validate_certificate(cert_pem, ca_cert_pem):
@@ -61,36 +132,23 @@ def verify_certificate(cert_pem):
         return False, f"La signature du certificat n'est pas valide : {e}"
     return True, "Le certificat est valide."
 
-# Paramètres MQTT
-numero_client = sys.argv[1]
-mqtt_broker_address = "194.57.103.203"
-mqtt_broker_port = 1883
-mqtt_client_id = "ca_client_julien_hugo"
-topic = f"vehicule/JH/client{numero_client}" # ajouter le numéro de client en argument
-
-USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
-
-if USE_VERSION2_CALLBACKS:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
-else:
-    client = mqtt.Client(mqtt_client_id)
-
-def on_message(client, userdata, msg):
-    received_data = msg.payload.decode().split(',')
-    type_demande = received_data[0]
-    contenu = received_data[1]
-    if type_demande == 'retour_certificat':
-        print("Message reçu sur le sujet/topic "+msg.topic)
-        print(verify_certificate(contenu))
-
-def on_connect(client, userdata, flags, reason_code, properties):
-    print("Connecté au broker MQTT avec le code de retour:", reason_code)
-    client.subscribe(topic)
-
 client.on_connect = on_connect
 client.on_message = on_message
-if client.connect("194.57.103.203",1883,60) != 0:
-    print("Problème de connexion avec le broker")
-client.publish("vehicule/JH/vendeur1", ','.join(map(str, ['demande_certificat',numero_client])))
+
+#demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
+message_ca = {
+    'type': 'demande_cle_publique_ca',
+    'id': f'client{numero_client}' 
+}
+
+json_data = json.dumps(message_ca)
+client.publish(topic_ca,json_data)
+
+# message = {
+#     'type': 'demande_certificat_vendeur',
+#     'id': f'client{numero_client}'
+# }
+# json_data = json.dumps(message)
+#client.publish(topic_vendeur1,json_data)
 
 client.loop_forever()

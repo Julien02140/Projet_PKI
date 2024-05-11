@@ -14,12 +14,105 @@ from cryptography.hazmat.primitives.asymmetric import rsa,padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
 from cryptography.x509 import load_pem_x509_certificate
+import base64
 
+# Paramètres MQTT
+mqtt_broker_address = "194.57.103.203"
+mqtt_broker_port = 1883
+mqtt_client_id = "ca_server_julien_hugo"
+topic = "vehicule/JH/ca"
+
+USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
+
+if USE_VERSION2_CALLBACKS:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
+else:
+    client = mqtt.Client(mqtt_client_id)
+
+if client.connect(mqtt_broker_address,mqtt_broker_port,60) != 0:
+    print("Problème de connexion avec le broker")
+
+def on_message(client, userdata, msg):
+    json_data = msg.payload.decode('utf-8')
+    message = json.loads(json_data)
+    if message['type'] == 'test_public_key':
+        print("demande de test de la cle de la part du client \n")
+        
+        with open("key/key_ca.key", "rb") as f:
+            ca_key = f.read()
+
+        private_key = serialization.load_pem_private_key(ca_key, password=None)
+
+        msg = "hello world, voici un message signé avec ma cle"
+        signature = private_key.sign(
+            msg.encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+
+        reponse = {
+            'type': 'retour_test_public_key',
+            'content': msg,
+            'signature': base64.b64encode(signature).decode('utf-8')
+        }
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+
+    if message['type'] == 'demande_cle_publique_ca':
+        print(f"demande de la clé publique de la part du {message['id']}")
+        with open("pem/cert_ca.pem", "rb") as f:
+            ca_cert = f.read()
+        cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
+        public_key = cert.public_key()
+        public_key_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        reponse = {
+            'type': 'retour_cle_publique_ca',
+            'public_key': public_key_pem.decode('utf-8') #convertir en str 
+        }
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+    if message['type'] == 'demande_connexion':
+        print(f"demande de connexion reçu de la part du {message['id']}\n")
+        reponse = {'type': 'connexion_acceptee'}
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+    elif message['type'] == 'demande_certificat':
+        print(f"demande de certificat de la part du {message['id']} \n")
+        csr = message.get('csr', None)
+        csr = eval(csr.encode('utf-8'))
+        print("verification de la signature du csr")
+        if verify_signature(csr):
+            cert = str(emit_certificate(csr,message['id']))
+            reponse = {
+                'type': 'envoi_certificat',
+                'certificat': cert
+            }
+            json_data = json.dumps(reponse)
+            client.publish(f"vehicule/JH/{message['id']}",json_data)
+        else: 
+            print('Erreur avec la signature')
+    # received_data = msg.payload.decode().split(',')
+    # type_demande = received_data[0]
+    # contenu = received_data[1]
+    # if type_demande == 'demande_certificat':
+    #     print(f"Message reçu de {contenu}")
+    #     contenu = f'vendeur{contenu}'
+    #     my_cert_pem = generate_certif(contenu)
+    #     client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
+
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe(topic)
 
 #server_IP = '18.224.18.157'
 server_name = 'ca_server_julien_hugo'
-
-
 
 # nb_message_recu = 0
 def generate_certif_ca():
@@ -136,20 +229,6 @@ def emit_certificate(csr_bytes,id):
     with open(f'pem/cert_{id}.key', 'wb') as c:
         c.write(cert)
     return cert
-
-# Paramètres MQTT
-mqtt_broker_address = "194.57.103.203"
-mqtt_broker_port = 1883
-mqtt_client_id = "ca_server_julien_hugo"
-topic = "vehicule/JH/ca"
-
-
-USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
-
-if USE_VERSION2_CALLBACKS:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
-else:
-    client = mqtt.Client(mqtt_client_id)  
     
 generate_certif_ca()
 # Connexion au broker MQTT avec TLS/SSL
@@ -157,46 +236,9 @@ generate_certif_ca()
 #client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
 #client.tls_insecure_set(True)
 
-
-def on_message(client, userdata, msg):
-    json_data = msg.payload.decode('utf-8')
-    message = json.loads(json_data)
-    if message['type'] == 'demande_connexion':
-        print("common\n")
-        reponse = {'type': 'connexion_acceptee'}
-        json_data = json.dumps(reponse)
-        client.publish(f"vehicule/JH/{message['id']}",json_data)
-    elif message['type'] == 'demande_certificat':
-        print("common\n")
-        csr = message.get('csr', None)
-        csr = eval(csr.encode('utf-8'))
-        if verify_signature(csr):
-            cert = str(emit_certificate(csr,message['id']))
-            reponse = {
-                'type': 'envoi_certificat',
-                'certificat': cert
-            }
-            json_data = json.dumps(reponse)
-            client.publish(f"vehicule/JH/{message['id']}",json_data)
-        else: 
-            print('Erreur avec la signature')
-    # received_data = msg.payload.decode().split(',')
-    # type_demande = received_data[0]
-    # contenu = received_data[1]
-    # if type_demande == 'demande_certificat':
-    #     print(f"Message reçu de {contenu}")
-    #     contenu = f'vendeur{contenu}'
-    #     my_cert_pem = generate_certif(contenu)
-    #     client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
-
-
-def on_connect(client, userdata, flags, reason_code, properties):
-    print("Connecté au broker MQTT avec le code de retour:", reason_code)
-    client.subscribe(topic)
-
-client.on_connect = on_connect
 client.on_message = on_message
-if client.connect("194.57.103.203",1883,60) != 0:
-    print("Problème de connexion avec le broker")
+client.on_connect = on_connect
 
+print("démarrage CA")
+    
 client.loop_forever()
