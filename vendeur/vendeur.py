@@ -41,12 +41,26 @@ def on_message(client, userdata, msg):
         }
         json_data = json.dumps(reponse)
         client.publish(topic_ca,json_data)
+
     if message['type'] == 'envoi_certificat':
         print("certificat recu de la part de la CA \n")
         cert = message.get('certificat', None)
         cert = eval(cert.encode('utf-8'))
         with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
             f.write(cert)
+    if message['type'] == 'demande_certificat_vendeur':
+        print(f"demande de certificat recu de la part du {message['id']}")
+        with open(f'cert_vendeur{numero_vendeur}.pem', 'rb') as f:
+            certificat = f.read()
+        reponse = {
+            'type': 'retour_demande_de_certificat',
+            'id': f'vendeur{numero_vendeur}',
+            'certificat': certificat.decode('utf-8')
+        }
+        json_data = json.dumps(reponse)
+        print("envoie du certificat au client \n")
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+
 
     # received_data = msg.payload.decode().split(',')
     # type_demande = received_data[0]

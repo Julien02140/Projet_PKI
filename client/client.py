@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from datetime import datetime, timezone, timedelta
-import sys, json
+import sys,os,json
 import base64
 
 client_name = "client1"
@@ -72,11 +72,18 @@ def on_message(client, userdata, msg):
         except:
             print("La signature est invalide.")     
 
-
-    if message['type'] == 'retour_certificat_vendeur':
+    if message['type'] == 'retour_demande_de_certificat':
         print(f"certificat reçu de la part du {message['id']}")
         cert = message.get('certificat',None)
-        verify_certificate(cert)
+        cert = cert.encode('utf-8')
+        with open(f'cert_{message["id"]}.pem', 'wb') as c:
+            c.write(cert)
+
+        bool = verify_certificate(cert)
+        if bool == True:
+            print("certificat valide")
+        else:
+            print("certificat non valide")
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
@@ -112,17 +119,22 @@ def verify_certificate(cert_pem):
     cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
     
     # Vérifier si le certificat est encore valide
-    now = datetime.now(timezone.utc)
-    if now < cert.not_valid_before or now > cert.not_valid_after:
-        return False, "Le certificat n'est pas dans sa période de validité."
+    # now = datetime.now(timezone.utc)
+    # if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
+    #     return False, "Le certificat n'est pas dans sa période de validité."
+    
+    with open("public_key_ca.pem", "rb") as f:
+            ca_public_key = f.read()
+        
+    ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
 
     # Vérifier la signature du certificat en utilisant la clé publique du certificat
     try:
         # Obtenez la clé publique du certificat
-        public_key = cert.public_key()
+        # public_key = cert.public_key()
 
         # Vérifiez la signature du certificat
-        public_key.verify(
+        ca_public_key.verify(
             cert.signature,
             cert.tbs_certificate_bytes,
             padding.PKCS1v15(),
@@ -135,20 +147,29 @@ def verify_certificate(cert_pem):
 client.on_connect = on_connect
 client.on_message = on_message
 
+#création d'un dossier confiance, cela stocke les certificats de confiance.
+if not os.path.exists("trusted"):
+    os.makedirs("trusted")
+
+#création d'un dossier pour les certificats rejetés.
+if not os.path.exists("rejected"):
+    os.makedirs("rejected")
+
+
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
-message_ca = {
-    'type': 'demande_cle_publique_ca',
-    'id': f'client{numero_client}' 
-}
-
-json_data = json.dumps(message_ca)
-client.publish(topic_ca,json_data)
-
-# message = {
-#     'type': 'demande_certificat_vendeur',
-#     'id': f'client{numero_client}'
+# message_ca = {
+#     'type': 'demande_cle_publique_ca',
+#     'id': f'client{numero_client}' 
 # }
-# json_data = json.dumps(message)
-#client.publish(topic_vendeur1,json_data)
+
+# json_data = json.dumps(message_ca)
+# client.publish(topic_ca,json_data)
+
+message_vendeur = {
+    'type': 'demande_certificat_vendeur',
+    'id': f'client{numero_client}'
+}
+json_data_vendeur = json.dumps(message_vendeur)
+client.publish(topic_vendeur1,json_data_vendeur)
 
 client.loop_forever()

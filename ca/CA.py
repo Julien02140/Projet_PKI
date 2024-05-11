@@ -94,6 +94,7 @@ def on_message(client, userdata, msg):
                 'certificat': cert
             }
             json_data = json.dumps(reponse)
+            print("signature du csr correct")
             client.publish(f"vehicule/JH/{message['id']}",json_data)
         else: 
             print('Erreur avec la signature')
@@ -194,13 +195,19 @@ def emit_certificate(csr_bytes,id):
     # Charger la clé privée de la CA
     with open("pem/cert_ca.pem", "rb") as f:
         ca_cert_pem = f.read()
+    # with open("key/key_ca.key", "rb") as f:
+    #     ca_key_pem = f.read()
+    # ca_private_key = serialization.load_pem_private_key(
+    #     ca_key_pem,
+    #     password=None,
+    #     backend=default_backend()
+    # )
+
     with open("key/key_ca.key", "rb") as f:
-        ca_key_pem = f.read()
-    ca_private_key = serialization.load_pem_private_key(
-        ca_key_pem,
-        password=None,
-        backend=default_backend()
-    )
+        ca_key = f.read()
+
+    private_key = serialization.load_pem_private_key(ca_key, password=None)
+
 
     # Charger le CSR
     csr = x509.load_pem_x509_csr(csr_bytes, default_backend())
@@ -221,7 +228,7 @@ def emit_certificate(csr_bytes,id):
             .not_valid_after(now + timedelta(days=365))
             .add_extension(basic_contraints,True)
             .add_extension(x509.SubjectAlternativeName(alt_names), False)
-            .sign(ca_private_key, hashes.SHA256(), default_backend())
+            .sign(private_key, hashes.SHA256(), default_backend())
     )
 
     # Retourner le certificat émis
