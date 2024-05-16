@@ -35,6 +35,23 @@ if client.connect("194.57.103.203",1883,60) != 0:
 def on_message(client, userdata, msg):
     json_data = msg.payload.decode('utf-8')
     message = json.loads(json_data)
+    if message['type'] == 'envoie_crl':
+        print("j'ai recu la crl \n")
+        crl = message.get('crl', None)
+        crl = crl.encode('utf-8')
+        with open("crl.pem", "wb") as f:
+            f.write(crl)
+        #verifier la crl et le certificat
+        #charger le certificat
+        print("vérification crl et certificat vendeur \n")
+
+        with open("cert_vendeur1.pem", "rb") as f:
+            cert_vendeur = f.read()
+
+        cert_vendeur = x509.load_pem_x509_certificate(cert_vendeur, default_backend())
+
+        verifier_crl(cert_vendeur)
+
     if message['type'] == 'retour_cle_publique_ca':
         print("cle publique de la CA reçu")
         public_key = message.get('public_key', None)
@@ -176,6 +193,46 @@ def envoyer_messages():
     json_data_vendeur = json.dumps(message_vendeur)
     client.publish(topic_vendeur1, json_data_vendeur)
 
+#consulte la crl et regarde si le certificat est révoqué
+def verifier_crl(cert):
+    #charger la clé publique de la CA
+    with open("public_key_ca.pem", "rb") as f:
+        ca_public_key = f.read()
+    
+    ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
+
+    #charge le fichier crl
+    with open("crl.pem", "rb") as f:
+        crl = f.read()
+
+    crl = x509.load_pem_x509_crl(crl, default_backend())
+
+    # Vérifier la signature de la CRL
+    try:
+        ca_public_key.verify(
+            crl.signature,
+            crl.tbs_certlist_bytes,
+            padding.PKCS1v15(),
+            crl.signature_hash_algorithm,
+        )
+        print("Signature de la CRL valide.")
+    except Exception as e:
+        print(f"Erreur lors de la vérification de la signature de la CRL : {e}")
+
+    # Vérifier la validité de la CRL
+    # now = datetime.now()
+    # if now < crl.next_update or now > crl.last_update:
+    #     print("La CRL est valide.")
+    # else:
+    #     print("La CRL a expiré ou n'est pas encore valide.")
+
+    for revoked_cert in crl:
+        if revoked_cert.serial_number == cert.serial_number:
+            print("Le certificat est révoqué.")
+            break
+        else:
+            print("Le certificat n'est pas révoqué.")
+
 
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
 # message_ca = {
@@ -195,10 +252,11 @@ def envoyer_messages():
 # json_data_vendeur = json.dumps(message_vendeur)
 # client.publish(topic_vendeur1,json_data_vendeur)
 
-client.loop_start()
+# client.loop_start()
 
-envoyer_messages()
+# envoyer_messages()
 
-time.sleep(10)
+# time.sleep(10)
 
-client.loop_stop()
+# client.loop_stop()
+client.loop_forever()

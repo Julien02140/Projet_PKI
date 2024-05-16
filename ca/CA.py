@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa,padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
-from cryptography.x509 import load_pem_x509_certificate
+from cryptography.x509 import load_pem_x509_certificate, RevokedCertificate
 import base64
 
 # Paramètres MQTT
@@ -192,14 +192,51 @@ def verify_signature(csr_file):
         return False  # La signature est invalide
 
 def add_certificat_crl(cert):
-    with open("crl.pem", "rb") as f:
-        crl = f.read()
-    crl = x509.load_pem_x509_crl(crl, default_backend())
-    builder = x509.CertificateRevocationListBuilder(crl)
-    
-    builder = builder.add_revoked_certificate(cert)
+    if not os.path.exists("crl"):
+        os.makedirs("crl")
 
-    with open("key_ca.key", "rb") as f:
+    crl = None
+
+    if os.path.exists("crl/crl.pem"):
+        with open("crl/crl.pem", "rb") as f:
+            crl_bytes = f.read()
+        crl = x509.load_pem_x509_crl(crl_bytes)
+        # revoked_certificate = builder.revoked_certificate
+        # print("certificat revoqué " + revoked_certificate + "\n")
+        #builder = x509.CertificateRevocationListBuilder(builder)
+
+    builder = x509.CertificateRevocationListBuilder()
+    builder = builder.issuer_name(x509.Name([
+    x509.NameAttribute(NameOID.COMMON_NAME, 'JulienHugo CA CRL'),
+    ]))
+    now = datetime.now(timezone.utc)
+    builder = builder.last_update(now)
+    builder = builder.next_update(now + timedelta(days=1))
+
+    builder_re = x509.RevokedCertificateBuilder()
+    builder_re = builder_re.revocation_date(datetime.today())
+    builder_re = builder_re.serial_number(cert.serial_number)
+    revoked_certificate = builder_re.build()
+    builder = builder.add_revoked_certificate(revoked_certificate)
+
+    if crl != None:
+        for r in crl:
+            if r.serial_number != cert.serial_number:
+                builder_re = x509.RevokedCertificateBuilder()
+                builder_re = builder_re.revocation_date(datetime.today())
+                builder_re = builder_re.serial_number(r.serial_number)
+                revoked_certificate = builder_re.build()
+                builder = builder.add_revoked_certificate(revoked_certificate)
+
+
+    # builder.last_update_utc(now)
+    # builder = builder.next_update_utc = now + timedelta(days=1)
+
+
+
+    #builder = builder.add_revoked_certificate(revoked_certificate)
+    
+    with open("key/key_ca.key", "rb") as f:
         ca_key_pem = f.read()
     
     ca_private_key = serialization.load_pem_private_key(
@@ -212,7 +249,7 @@ def add_certificat_crl(cert):
 
     crl_serialize = crl.public_bytes(serialization.Encoding.PEM)
 
-    with open("crl.pem", "wb") as f:
+    with open("crl/crl.pem", "wb") as f:
         f.write(crl_serialize)
 
 def emit_certificate(csr_bytes,id):
@@ -301,14 +338,14 @@ def emit_certificate(csr_bytes,id):
         c.write(cert_bytes)
     return cert_bytes
     
-generate_certif_ca()
+#generate_certif_ca()
 
 #generer un dossier crl et un fichier vide pour la crl
-if not os.path.exists("crl"):
-    os.makedirs("crl")
+# if not os.path.exists("crl"):
+#     os.makedirs("crl")
 
-with open("crl/crl.pem", "wb") as f:
-    pass
+# with open("crl/crl.pem", "wb") as f:
+#     pass
 # Connexion au broker MQTT avec TLS/SSL
 #client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
 #client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
@@ -318,5 +355,40 @@ client.on_message = on_message
 client.on_connect = on_connect
 
 print("démarrage CA")
+
+with open("pem/cert_vendeur1.key", "rb") as f:
+    cert_vendeur = f.read()
+
+cert = load_pem_x509_certificate(cert_vendeur, default_backend())
+
+add_certificat_crl(cert)
+
+#creer un fichier pour la clé publique:
+with open("pem/cert_ca.pem", "rb") as f:
+    ca_cert = f.read()
+
+cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
+public_key = cert.public_key()
+public_key_pem = public_key.public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo
+)
+
+with open("key/public_key_ca.pem", "wb") as f:
+    f.write(public_key_pem)
+
+#envoyer la crl
+
+# Charger la CRL
+with open("crl/crl.pem", "rb") as f:
+    crl_data = f.read()
+
+reponse = {
+    'type': 'envoie_crl',
+    'crl': crl_data.decode('utf-8') #convertir en str 
+}
+
+json_data = json.dumps(reponse)
+client.publish("vehicule/JH/client1",json_data)
     
 client.loop_forever()
