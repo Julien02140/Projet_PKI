@@ -11,15 +11,13 @@ import sys,os,json
 import base64
 import time
 
-client_name = "client1"
-
 # Paramètres MQTT
 numero_client = sys.argv[1]
 mqtt_broker_address = "194.57.103.203"
 mqtt_broker_port = 1883
 mqtt_client_id = "ca_client_julien_hugo"
-topic = f"vehicule/JH/client{numero_client}" # ajouter le numéro de client en argument
-topic_vendeur1 = "vehicule/JH/vendeur1"
+topic = f"vehicule/JH/client{numero_client}"
+topic_vendeur = f"vehicule/JH/vendeur{numero_client}"
 topic_ca = "vehicule/JH/ca"
 
 USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
@@ -99,52 +97,31 @@ def on_message(client, userdata, msg):
         
         cert = x509.load_pem_x509_certificate(cert_encode, default_backend())
 
-        bool = verify_certificate(cert)
+        bool = verify_revocation_list(cert)
         if bool == True:
             print("certificat valide")
         else:
             print("certificat non valide")
 
+    if message['type'] == 'envoie_crl':
+
+        crl_str = message.get('crl',None)
+        crl = crl_str.encode('utf-8')
+        with open(f'crl.pem', 'wb') as c:
+            c.write(crl)
+
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
     client.subscribe(topic)
 
-
-def validate_certificate(cert_pem, ca_cert_pem):
-    pass
-# Générer une paire de clés RSA pour le client
-# key = rsa.generate_private_key(
-#     public_exponent=65537,
-#     key_size=2048,
-# )
-
-# name = x509.Name([
-#     x509.NameAttribute(NameOID.COMMON_NAME, client_name)
-# ])
-
-# # Créer une demande de signature de certificat (CSR)
-# csr = (
-#     x509.CertificateSigningRequestBuilder()
-#         .subject_name(name).sign(key, hashes.SHA256())
-# )
-
-# # Exporter le CSR au format PEM
-# csr_pem = csr.public_bytes(serialization.Encoding.PEM)
-
-# # Enregistrer le CSR dans un fichier
-# with open("csr.pem", "wb") as f:
-#     f.write(csr_pem)
-def verify_certificate(cert):
-    # Charger le certificat à valider
-    #cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
-    
+def verify_revocation_list(cert):
     # Vérifier si le certificat est encore valide
-    # now = datetime.now(timezone.utc)
-    # if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
-    #     return False, "Le certificat n'est pas dans sa période de validité."
-    
+    now = datetime.now(timezone.utc)
+    if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
+        return False, "Le certificat n'est pas dans sa période de validité."
+    print("Le certificat est valide")
     with open("public_key_ca.pem", "rb") as f:
-            ca_public_key = f.read()
+        ca_public_key = f.read()
         
     ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
 
@@ -181,17 +158,25 @@ def envoyer_messages():
         'type': 'demande_cle_publique_ca',
         'id': f'client{numero_client}' 
     }
-    json_data = json.dumps(message_ca)
-    client.publish(topic_ca, json_data)
+    json_data_crl = json.dumps(message_ca)
+    client.publish(topic_ca, json_data_crl)
+    time.sleep(2)
 
-    time.sleep(3)
+    message_crl = {
+        'type': 'demande_crl',
+        'id': f'client{numero_client}' 
+    }
+    json_data = json.dumps(message_crl)
+    client.publish(topic_ca, json_data)
+    time.sleep(2)
 
     message_vendeur = {
         'type': 'demande_certificat_vendeur',
         'id': f'client{numero_client}'
     }
     json_data_vendeur = json.dumps(message_vendeur)
-    client.publish(topic_vendeur1, json_data_vendeur)
+    client.publish(topic_vendeur,json_data_vendeur)
+    
 
 #consulte la crl et regarde si le certificat est révoqué
 def verifier_crl(cert):
@@ -229,9 +214,9 @@ def verifier_crl(cert):
     for revoked_cert in crl:
         if revoked_cert.serial_number == cert.serial_number:
             print("Le certificat est révoqué.")
-            break
-        else:
-            print("Le certificat n'est pas révoqué.")
+            return True
+    print("Le certificat n'est pas révoqué.")
+    return False
 
 
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
@@ -243,20 +228,12 @@ def verifier_crl(cert):
 # json_data = json.dumps(message_ca)
 # client.publish(topic_ca,json_data)
 
-# time.sleep(5)
 
-# message_vendeur = {
-#     'type': 'demande_certificat_vendeur',
-#     'id': f'client{numero_client}'
-# }
-# json_data_vendeur = json.dumps(message_vendeur)
-# client.publish(topic_vendeur1,json_data_vendeur)
 
 # client.loop_start()
 
-# envoyer_messages()
-
-# time.sleep(10)
+envoyer_messages()
 
 # client.loop_stop()
+# client.publish(topic_vendeur1,json_data_vendeur)
 client.loop_forever()

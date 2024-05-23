@@ -21,99 +21,6 @@ mqtt_broker_address = "194.57.103.203"
 mqtt_broker_port = 1883
 mqtt_client_id = "ca_server_julien_hugo"
 topic = "vehicule/JH/ca"
-
-USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
-
-if USE_VERSION2_CALLBACKS:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
-else:
-    client = mqtt.Client(mqtt_client_id)
-
-if client.connect(mqtt_broker_address,mqtt_broker_port,60) != 0:
-    print("Problème de connexion avec le broker")
-
-def on_message(client, userdata, msg):
-    json_data = msg.payload.decode('utf-8')
-    message = json.loads(json_data)
-    if message['type'] == 'test_public_key':
-        print("demande de test de la cle de la part du client \n")
-        
-        with open("key/key_ca.key", "rb") as f:
-            ca_key = f.read()
-
-        private_key = serialization.load_pem_private_key(ca_key, password=None)
-
-        msg = "hello world, voici un message signé avec ma cle"
-        signature = private_key.sign(
-            msg.encode('utf-8'),
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
-
-        reponse = {
-            'type': 'retour_test_public_key',
-            'content': msg,
-            'signature': base64.b64encode(signature).decode('utf-8')
-        }
-        json_data = json.dumps(reponse)
-        client.publish(f"vehicule/JH/{message['id']}",json_data)
-
-    if message['type'] == 'demande_cle_publique_ca':
-        print(f"demande de la clé publique de la part du {message['id']}")
-        with open("pem/cert_ca.pem", "rb") as f:
-            ca_cert = f.read()
-        cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
-        public_key = cert.public_key()
-        public_key_pem = public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        reponse = {
-            'type': 'retour_cle_publique_ca',
-            'public_key': public_key_pem.decode('utf-8') #convertir en str 
-        }
-        json_data = json.dumps(reponse)
-        client.publish(f"vehicule/JH/{message['id']}",json_data)
-    if message['type'] == 'demande_connexion':
-        print(f"demande de connexion reçu de la part du {message['id']}\n")
-        reponse = {'type': 'connexion_acceptee'}
-        json_data = json.dumps(reponse)
-        client.publish(f"vehicule/JH/{message['id']}",json_data)
-        print("envoie connexion actepte à vendeur")
-    elif message['type'] == 'demande_certificat':
-        print(f"demande de certificat de la part du {message['id']} \n")
-        csr = message.get('csr', None)
-        csr = eval(csr.encode('utf-8'))
-        print("verification de la signature du csr")
-        if verify_signature(csr):
-            cert = str(emit_certificate(csr,message['id']))
-            reponse = {
-                'type': 'envoi_certificat',
-                'certificat': cert
-            }
-            json_data = json.dumps(reponse)
-            print("signature du csr correct")
-            client.publish(f"vehicule/JH/{message['id']}",json_data)
-        else: 
-            print('Erreur avec la signature')
-    # received_data = msg.payload.decode().split(',')
-    # type_demande = received_data[0]
-    # contenu = received_data[1]
-    # if type_demande == 'demande_certificat':
-    #     print(f"Message reçu de {contenu}")
-    #     contenu = f'vendeur{contenu}'
-    #     my_cert_pem = generate_certif(contenu)
-    #     client.publish(f"vehicule/JH/{contenu}", ','.join(map(str, ['retour_certificat',my_cert_pem])))
-
-
-def on_connect(client, userdata, flags, reason_code, properties):
-    print("Connecté au broker MQTT avec le code de retour:", reason_code)
-    client.subscribe(topic)
-
-#server_IP = '18.224.18.157'
 server_name = 'ca_server_julien_hugo'
 
 # nb_message_recu = 0
@@ -191,7 +98,7 @@ def verify_signature(csr_file):
     except InvalidSignature:
         return False  # La signature est invalide
 
-def add_certificat_crl(cert):
+def add_certificat_crl(name):
     if not os.path.exists("crl"):
         os.makedirs("crl")
 
@@ -204,7 +111,9 @@ def add_certificat_crl(cert):
         # revoked_certificate = builder.revoked_certificate
         # print("certificat revoqué " + revoked_certificate + "\n")
         #builder = x509.CertificateRevocationListBuilder(builder)
-
+    with open(f"pem/cert_{name}.pem", "rb") as f:
+        cert_bytes = f.read()
+    cert = x509.load_pem_x509_certificate(cert_bytes)
     builder = x509.CertificateRevocationListBuilder()
     builder = builder.issuer_name(x509.Name([
     x509.NameAttribute(NameOID.COMMON_NAME, 'JulienHugo CA CRL'),
@@ -227,14 +136,6 @@ def add_certificat_crl(cert):
                 builder_re = builder_re.serial_number(r.serial_number)
                 revoked_certificate = builder_re.build()
                 builder = builder.add_revoked_certificate(revoked_certificate)
-
-
-    # builder.last_update_utc(now)
-    # builder = builder.next_update_utc = now + timedelta(days=1)
-
-
-
-    #builder = builder.add_revoked_certificate(revoked_certificate)
     
     with open("key/key_ca.key", "rb") as f:
         ca_key_pem = f.read()
@@ -334,61 +235,157 @@ def emit_certificate(csr_bytes,id):
 
     # Retourner le certificat émis
     cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
-    with open(f'pem/cert_{id}.key', 'wb') as c:
+    with open(f'pem/cert_{id}.pem', 'wb') as c:
         c.write(cert_bytes)
     return cert_bytes
+
+USE_VERSION2_CALLBACKS = not paho.mqtt.__version__.startswith("1.")
+
+if USE_VERSION2_CALLBACKS:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, mqtt_client_id)
+else:
+    client = mqtt.Client(mqtt_client_id)
+
+if client.connect(mqtt_broker_address,mqtt_broker_port,60) != 0:
+    print("Problème de connexion avec le broker")
+
+def on_message(client, userdata, msg):
+    json_data = msg.payload.decode('utf-8')
+    message = json.loads(json_data)
+
+    if message['type'] == 'test_public_key':
+
+        print("demande de test de la cle de la part du client \n")
+        with open("key/key_ca.key", "rb") as f:
+            ca_key = f.read()
+        private_key = serialization.load_pem_private_key(ca_key, password=None)
+        msg = "hello world, voici un message signé avec ma cle"
+        signature = private_key.sign(
+            msg.encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+
+        reponse = {
+            'type': 'retour_test_public_key',
+            'content': msg,
+            'signature': base64.b64encode(signature).decode('utf-8')
+        }
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+
+    if message['type'] == 'demande_cle_publique_ca':
+
+        print(f"demande de la clé publique de la part du {message['id']}")
+        with open("pem/cert_ca.pem", "rb") as f:
+            ca_cert = f.read()
+        cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
+        public_key = cert.public_key()
+        public_key_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        reponse = {
+            'type': 'retour_cle_publique_ca',
+            'public_key': public_key_pem.decode('utf-8') #convertir en str 
+        }
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+
+    if message['type'] == 'demande_connexion':
+
+        print(f"demande de connexion reçu de la part du {message['id']}\n")
+        reponse = {'type': 'connexion_acceptee'}
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+        print("envoie connexion actepte à vendeur")
+
+    elif message['type'] == 'demande_certificat':
+        print(f"demande de certificat de la part du {message['id']} \n")
+        csr = message.get('csr', None)
+        csr = eval(csr.encode('utf-8'))
+        print("verification de la signature du csr")
+        if verify_signature(csr):
+            cert = str(emit_certificate(csr,message['id']))
+            reponse = {
+                'type': 'envoi_certificat',
+                'certificat': cert
+            }
+            json_data = json.dumps(reponse)
+            print("signature du csr correct")
+            client.publish(f"vehicule/JH/{message['id']}",json_data)
+
+            # Pour créer le scénario où le client trouve que le certificat est révoqué dans la CRL
+            if message['id'] == 'vendeur2':
+                add_certificat_crl(message['id'])
+        else: 
+            print('Erreur avec la signature')
+
+    elif message['type'] == 'demande_crl':
+
+        print(f"demande de crl de la part du {message['id']} \n")
+        with open("crl/crl.pem", "rb") as f:
+            crl_data = f.read()
+        reponse = {
+            'type': 'envoie_crl',
+            'crl': crl_data.decode('utf-8') #convertir en str 
+        }
+        json_data = json.dumps(reponse)
+        client.publish(f"vehicule/JH/{message['id']}",json_data)
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("Connecté au broker MQTT avec le code de retour:", reason_code)
+    client.subscribe(topic)
+
+
     
-#generate_certif_ca()
+generate_certif_ca()
 
 #generer un dossier crl et un fichier vide pour la crl
-# if not os.path.exists("crl"):
-#     os.makedirs("crl")
-
-# with open("crl/crl.pem", "wb") as f:
-#     pass
-# Connexion au broker MQTT avec TLS/SSL
-#client.tls_set(ca_certs="ca_cert.crt", certfile="ca_cert.pem", keyfile="ca_key.key")
-#client.tls_set("ca_cert.pem", tls_version=ssl.PROTOCOL_TLSv1_2, cert_reqs=ssl.CERT_NONE)
-#client.tls_insecure_set(True)
+if not os.path.exists("crl"):
+    os.makedirs("crl")
 
 client.on_message = on_message
 client.on_connect = on_connect
 
 print("démarrage CA")
 
-with open("pem/cert_vendeur1.key", "rb") as f:
-    cert_vendeur = f.read()
+def get_crl(numero_vendeur):
+    # with open("pem/cert_vendeur1.key", "rb") as f:
+    #     cert_vendeur = f.read()
 
-cert = load_pem_x509_certificate(cert_vendeur, default_backend())
+    # cert = load_pem_x509_certificate(cert_vendeur, default_backend())
 
-add_certificat_crl(cert)
+    # add_certificat_crl(cert)
 
-#creer un fichier pour la clé publique:
-with open("pem/cert_ca.pem", "rb") as f:
-    ca_cert = f.read()
+    #creer un fichier pour la clé publique:
+    with open("pem/cert_ca.pem", "rb") as f:
+        ca_cert = f.read()
 
-cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
-public_key = cert.public_key()
-public_key_pem = public_key.public_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PublicFormat.SubjectPublicKeyInfo
-)
+    cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
+    public_key = cert.public_key()
+    public_key_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 
-with open("key/public_key_ca.pem", "wb") as f:
-    f.write(public_key_pem)
+    with open("key/public_key_ca.pem", "wb") as f:
+        f.write(public_key_pem)
 
-#envoyer la crl
-
-# Charger la CRL
-with open("crl/crl.pem", "rb") as f:
-    crl_data = f.read()
-
-reponse = {
-    'type': 'envoie_crl',
-    'crl': crl_data.decode('utf-8') #convertir en str 
-}
-
-json_data = json.dumps(reponse)
-client.publish("vehicule/JH/client1",json_data)
-    
+    return public_key_pem
 client.loop_forever()
+
+
+# with open("crl/crl.pem", "rb") as f:
+#     crl_data = f.read()
+
+# reponse = {
+#     'type': 'envoie_crl',
+#     'crl': crl_data.decode('utf-8') #convertir en str 
+# }
+
+# json_data = json.dumps(reponse)
+# client.publish("vehicule/JH/client1",json_data)
