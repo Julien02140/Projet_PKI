@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa,padding
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
 from cryptography.x509 import load_pem_x509_certificate, RevokedCertificate
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import base64
 
 # Paramètres MQTT
@@ -25,6 +26,8 @@ server_name = 'ca_server_julien_hugo'
 
 # nb_message_recu = 0
 def generate_certif_ca():
+
+    #générer les clé privés et publique, chiffrement asymétrique
     key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=2048,
@@ -55,12 +58,24 @@ def generate_certif_ca():
             .add_extension(x509.SubjectAlternativeName(alt_names), False)
             .sign(key, hashes.SHA256(), default_backend)    
     )
+
     my_cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM)
+
+    #Transformer en format pem la clé privée
     my_key_pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.TraditionalOpenSSL,
         encryption_algorithm=serialization.NoEncryption(),
     )
+
+    #transformer en fomat pem la clé publique
+    public_key = key.public_key()
+
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
     if not os.path.exists("certificat"):
         os.makedirs("certificat")
     if not os.path.exists("key"):
@@ -73,6 +88,9 @@ def generate_certif_ca():
 
     with open(f'key/key_ca.key', 'wb') as c:
         c.write(my_key_pem)
+
+    with open(f'key/public_key_ca.pem', 'wb') as f:
+        f.write(public_pem)
 
     #on doit aussi creer un fichier pem
     #ce fichier contient le certificat et la clé privée
@@ -111,8 +129,10 @@ def add_certificat_crl(name):
         # revoked_certificate = builder.revoked_certificate
         # print("certificat revoqué " + revoked_certificate + "\n")
         #builder = x509.CertificateRevocationListBuilder(builder)
+
     with open(f"pem/cert_{name}.pem", "rb") as f:
         cert_bytes = f.read()
+
     cert = x509.load_pem_x509_certificate(cert_bytes)
     builder = x509.CertificateRevocationListBuilder()
     builder = builder.issuer_name(x509.Name([
@@ -253,6 +273,19 @@ def on_message(client, userdata, msg):
     json_data = msg.payload.decode('utf-8')
     message = json.loads(json_data)
 
+    if message['type'] == 'envoie_cle_AES':
+        #déchiffrer en utilisant la cle publique de la ca
+        id = dechiffre_message(message['id'])
+        AES_key = dechiffre_message(message['AES_key'])
+        AES_iv = dechiffre_message(message['AES_iv'])
+
+        AES_file = {'key': AES_key, 'AES_iv': AES_iv}
+
+        with open(f"key/AES_key_{id}.json", 'w') as f:
+            json.dumps(AES_file,f)
+
+        print(f'cle AES recu de la part du {id}')
+
     if message['type'] == 'test_public_key':
 
         print("demande de test de la cle de la part du client \n")
@@ -279,7 +312,7 @@ def on_message(client, userdata, msg):
 
     if message['type'] == 'demande_cle_publique_ca':
 
-        #extraction de la clé publique
+        #obtenetion de la clé publique du client
         print("cle publique du client recu")
         public_key = message.get('public_key_client', None)
         public_key = public_key.encode('utf-8')
@@ -287,19 +320,16 @@ def on_message(client, userdata, msg):
         with open(f"key/public_key_{message['id']}.pem", "wb") as f:
             f.write(public_key)
 
-        print(f"demande de la clé publique de la part du {message['id']}")
-        with open("pem/cert_ca.pem", "rb") as f:
-            ca_cert = f.read()
-        cert = x509.load_pem_x509_certificate(ca_cert, default_backend())
-        public_key = cert.public_key()
-        public_key_pem = public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
+        print(f"demande de la clé publique de la CA de la part du {message['id']}")
+
+        with open("key/public_key_ca.pem", "rb") as f:
+            public_key_pem = f.read()
+
         reponse = {
             'type': 'retour_cle_publique_ca',
             'public_key': public_key_pem.decode('utf-8') #convertir en str 
         }
+
         json_data = json.dumps(reponse)
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
@@ -336,12 +366,20 @@ def on_message(client, userdata, msg):
     elif message['type'] == 'demande_crl':
 
         print(f"demande de crl de la part du {message['id']} \n")
-        with open("crl/crl.pem", "rb") as f:
-            crl_data = f.read()
+
+        try:
+            with open("crl/crl.pem", "rb") as f:
+                crl_data = f.read()
+                crl_data = crl_data.decode('utf-8')
+        except FileNotFoundError:
+            print("Le fichier n'existe pas, crl vide")
+            crl_data = None
+
         reponse = {
             'type': 'envoie_crl',
-            'crl': crl_data.decode('utf-8') #convertir en str 
+            'crl': crl_data
         }
+
         json_data = json.dumps(reponse)
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
@@ -349,6 +387,26 @@ def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
     client.subscribe(topic)
 
+def dechiffre_message(message):
+    with open(f'key/key_ca.pem', 'rb') as f:
+        public_key_pem = f.read()
+    
+    private_key = serialization.load_pem_public_key(
+        public_key_pem,
+        password=None,
+    )
+
+    #dechiffrer le message
+    message_dechiffre = private_key.decrypt(
+            message,
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return message_dechiffre
 
     
 generate_certif_ca()

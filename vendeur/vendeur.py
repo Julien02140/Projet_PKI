@@ -52,7 +52,7 @@ def on_message(client, userdata, msg):
         #premier message recu de la part du client
         #donc le le client donne sa clé publique pour ensuite communiquer de façon sécurisé
 
-        #extraction de la clé publique
+        #obtention de la clé publique du client
         print("cle publique du client recu")
         public_key = message.get('public_key_client', None)
         public_key = public_key.encode('utf-8')
@@ -74,7 +74,6 @@ def on_message(client, userdata, msg):
         json_data = json.dumps(reponse)
         print("envoie du certificat au client \n")
         client.publish(f"vehicule/JH/{message['id']}",json_data)
-
 
 
     # received_data = msg.payload.decode().split(',')

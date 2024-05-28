@@ -44,18 +44,27 @@ def on_message(client, userdata, msg):
         #crl de la CA reu
         print("j'ai recu la crl \n")
         crl = message.get('crl', None)
-        crl = crl.encode('utf-8')
-        with open("crl.pem", "wb") as f:
-            f.write(crl)
-    
-        #charger le certificat
-        with open(f"cert_vendeur{numero_client}.pem", "rb") as f:
-            cert_vendeur = f.read()
 
-        cert_vendeur = x509.load_pem_x509_certificate(cert_vendeur, default_backend())
+        if crl != None:
+        
+            crl = crl.encode('utf-8')
 
-        #Le client vérifie si le certificat n'est pas dans la crl
-        verifier_crl(cert_vendeur)
+            with open("crl.pem", "wb") as f:
+                f.write(crl)
+        
+            #charger le certificat
+            with open(f"cert_vendeur{numero_client}.pem", "rb") as f:
+                cert_vendeur = f.read()
+
+            cert_vendeur = x509.load_pem_x509_certificate(cert_vendeur, default_backend())
+
+            #Le client vérifie si le certificat n'est pas dans la crl
+            verifier_crl(cert_vendeur)
+        
+        else:
+            #la crl est vide, aucun certificat n'a été révoqué par la CA pour le moment
+            print("CRL vide \n")
+            print("Certificat non révoqué \n")
 
     if message['type'] == 'retour_cle_publique_ca':
         print("cle publique de la CA reçu")
@@ -63,12 +72,26 @@ def on_message(client, userdata, msg):
         public_key = public_key.encode('utf-8')
         with open(f"public_key_ca.pem", "wb") as f:
             f.write(public_key)
-        # reponse = {
-        #     'type': 'test_public_key',
-        #     'id': f'client{numero_client}'
-        # }
-        # json_data = json.dumps(reponse)
-        # client.publish(topic_ca,json_data)
+
+        #le client et la ca ont échangés leurs clés publiques
+        #pour pouvoir échanger des messages sécurisés plus long
+        #ou des fichiers, le client va aussi donné sa clé AES
+
+
+        #le client chiffre les informations avec la clé publique de la CA
+        id_chiffre = chiffre_message('ca',f'client{numero_client}')
+        AES_key_chiffre = chiffre_message('ca',AES_key)
+        AES_iv_chiffre = chiffre_message('ca',AES_iv)
+
+        message_ca = {
+            'type': 'envoie_cle_AES',
+            'id': id_chiffre,
+            'AES_key': AES_key_chiffre,
+            'AES_iv': AES_iv_chiffre
+        }
+
+        json_data_ca = json.dumps(message_ca)
+        client.publish(topic_vendeur,json_data_ca)
 
         #le client a recu la clé publique de la CA, il peut maintenant
         #vérifier les certificats signés par celle-ci
@@ -120,13 +143,14 @@ def on_message(client, userdata, msg):
         cert = x509.load_pem_x509_certificate(cert_encode, default_backend())
 
         bool = verify_certificate(cert)
+
         if bool == True:
             print("certificat valide")
         else:
             print("certificat non valide")
 
         
-        if(numero_client == 1):
+        if(numero_client == "1"):
             print("fin du scénario 1")
         else:
             #le scénario 2 et 3 continue
@@ -148,19 +172,19 @@ def on_connect(client, userdata, flags, reason_code, properties):
 def verify_certificate(cert):
     # Vérifier si le certificat est encore valide
     now = datetime.now(timezone.utc)
+
     if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
         return False, "Le certificat n'est pas dans sa période de validité."
-    print("Le certificat est valide")
+    
+    print("date du certificat valide")
+
     with open("public_key_ca.pem", "rb") as f:
         ca_public_key = f.read()
         
     ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
 
-    # Vérifier la signature du certificat en utilisant la clé publique du certificat
+    #On verifie la signature du certificat en utilisant la clé publique de la CA
     try:
-        # Obtenez la clé publique du certificat
-        # public_key = cert.public_key()
-
         # Vérifiez la signature du certificat
         ca_public_key.verify(
             cert.signature,
@@ -168,6 +192,7 @@ def verify_certificate(cert):
             padding.PKCS1v15(),
             cert.signature_hash_algorithm,
         )
+        print("signature valide")
         return True
     except Exception as e:
         print(f"Erreur lors de la vérification de la signature : {e}")
@@ -251,8 +276,8 @@ def generate_key():
     with open(f'key/public_key_client{numero_client}.pem', 'wb') as f:
         f.write(public_pem)
 
-def chiffre_message(id_vendeur,message):
-    with open(f'key/public_key_{id_vendeur}', 'rb') as f:
+def chiffre_message(id_receveur,message):
+    with open(f'key/public_key_{id_receveur}.pem', 'rb') as f:
         public_key_pem = f.read()
 
     public_key = serialization.load_pem_public_key(
@@ -273,7 +298,7 @@ def chiffre_message(id_vendeur,message):
     return message_chiffre
 
 def dechiffre_message(message):
-    with open(f'key/private_key_client{numero_client}', 'rb') as f:
+    with open(f'key/private_key_client{numero_client}.pem', 'rb') as f:
         public_key_pem = f.read()
     
     private_key = serialization.load_pem_public_key(
@@ -303,16 +328,20 @@ def dechiffre_message(message):
 # json_data = json.dumps(message_ca)
 # client.publish(topic_ca,json_data)
 
-
+print(f"client numero : {numero_client} démarre")
 
 # client.loop_start()
 
 generate_key()
 
+#générer la clé AES
+AES_key = os.urandom(32)
+AES_iv = os.urandom(16) 
+
 #après avoir générer ses clés, le client commence par demander
 #à la CA sa clé pblique pour pouvoir vérifier les certificats
 #le clien envoie aussi sa clé publique pour des communications sécurisés
-with open(f'key/public_key_client_{numero_client}.pem', 'rb') as f:
+with open(f'key/public_key_client{numero_client}.pem', 'rb') as f:
     public_key_pem = f.read()
 
 message_ca = {
