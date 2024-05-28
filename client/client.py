@@ -17,6 +17,11 @@ mqtt_broker_address = "194.57.103.203"
 mqtt_broker_port = 1883
 mqtt_client_id = "ca_client_julien_hugo"
 topic = f"vehicule/JH/client{numero_client}"
+#le client1 va communiqué avec le vendeur1
+#c'est pour les différent scénarios
+#scénario 1 : client1, vendeur1 : vérification du certificat (signature et date)
+#scénario 2 : client2, vendeur2 : vérifier le certificat + vérifier si il est non révoqué (certificat non révoqué)
+#scénario 3 : client3, vendeur3 : pareil que scénario 2 mais le certificat est révoqué
 topic_vendeur = f"vehicule/JH/vendeur{numero_client}"
 topic_ca = "vehicule/JH/ca"
 
@@ -33,21 +38,23 @@ if client.connect("194.57.103.203",1883,60) != 0:
 def on_message(client, userdata, msg):
     json_data = msg.payload.decode('utf-8')
     message = json.loads(json_data)
+
     if message['type'] == 'envoie_crl':
+        #seul le client 1 et 2 arrive dans cet boucle
+        #crl de la CA reu
         print("j'ai recu la crl \n")
         crl = message.get('crl', None)
         crl = crl.encode('utf-8')
         with open("crl.pem", "wb") as f:
             f.write(crl)
-        #verifier la crl et le certificat
+    
         #charger le certificat
-        print("vérification crl et certificat vendeur \n")
-
-        with open("cert_vendeur1.pem", "rb") as f:
+        with open(f"cert_vendeur{numero_client}.pem", "rb") as f:
             cert_vendeur = f.read()
 
         cert_vendeur = x509.load_pem_x509_certificate(cert_vendeur, default_backend())
 
+        #Le client vérifie si le certificat n'est pas dans la crl
         verifier_crl(cert_vendeur)
 
     if message['type'] == 'retour_cle_publique_ca':
@@ -56,12 +63,26 @@ def on_message(client, userdata, msg):
         public_key = public_key.encode('utf-8')
         with open(f"public_key_ca.pem", "wb") as f:
             f.write(public_key)
-        reponse = {
-            'type': 'test_public_key',
-            'id': f'client{numero_client}'
+        # reponse = {
+        #     'type': 'test_public_key',
+        #     'id': f'client{numero_client}'
+        # }
+        # json_data = json.dumps(reponse)
+        # client.publish(topic_ca,json_data)
+
+        #le client a recu la clé publique de la CA, il peut maintenant
+        #vérifier les certificats signés par celle-ci
+        #il peut maintenant demander au vendeur son certificat
+
+        message_vendeur = {
+            'type': 'demande_certificat_vendeur',
+            'id': f'client{numero_client}',
+            'public_key_client': public_key_pem.decode('utf-8')
         }
-        json_data = json.dumps(reponse)
-        client.publish(topic_ca,json_data)
+
+        json_data_vendeur = json.dumps(message_vendeur)
+        client.publish(topic_vendeur,json_data_vendeur)
+
     if message['type'] == 'retour_test_public_key':
         print("message chiffre pour test reçu \n")
         msg = message['content']
@@ -89,6 +110,7 @@ def on_message(client, userdata, msg):
             print("La signature est invalide.")     
 
     if message['type'] == 'retour_demande_de_certificat':
+        #le client a recu le certificat
         print(f"certificat reçu de la part du {message['id']}")
         cert_str = message.get('certificat',None)
         cert_encode = cert_str.encode('utf-8')
@@ -97,24 +119,33 @@ def on_message(client, userdata, msg):
         
         cert = x509.load_pem_x509_certificate(cert_encode, default_backend())
 
-        bool = verify_revocation_list(cert)
+        bool = verify_certificate(cert)
         if bool == True:
             print("certificat valide")
         else:
             print("certificat non valide")
 
-    if message['type'] == 'envoie_crl':
+        
+        if(numero_client == 1):
+            print("fin du scénario 1")
+        else:
+            #le scénario 2 et 3 continue
+            #le client demande la crl à la CA
 
-        crl_str = message.get('crl',None)
-        crl = crl_str.encode('utf-8')
-        with open(f'crl.pem', 'wb') as c:
-            c.write(crl)
+            message_crl = {
+                'type': 'demande_crl',
+                'id': f'client{numero_client}' 
+            }
+
+            json_data = json.dumps(message_crl)
+            client.publish(topic_ca, json_data)
+
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
     client.subscribe(topic)
 
-def verify_revocation_list(cert):
+def verify_certificate(cert):
     # Vérifier si le certificat est encore valide
     now = datetime.now(timezone.utc)
     if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
@@ -152,31 +183,6 @@ if not os.path.exists("trusted"):
 #création d'un dossier pour les certificats rejetés.
 if not os.path.exists("rejected"):
     os.makedirs("rejected")
-
-def envoyer_messages():
-    message_ca = {
-        'type': 'demande_cle_publique_ca',
-        'id': f'client{numero_client}' 
-    }
-    json_data_crl = json.dumps(message_ca)
-    client.publish(topic_ca, json_data_crl)
-    time.sleep(2)
-
-    message_crl = {
-        'type': 'demande_crl',
-        'id': f'client{numero_client}' 
-    }
-    json_data = json.dumps(message_crl)
-    client.publish(topic_ca, json_data)
-    time.sleep(2)
-
-    message_vendeur = {
-        'type': 'demande_certificat_vendeur',
-        'id': f'client{numero_client}'
-    }
-    json_data_vendeur = json.dumps(message_vendeur)
-    client.publish(topic_vendeur,json_data_vendeur)
-    
 
 #consulte la crl et regarde si le certificat est révoqué
 def verifier_crl(cert):
@@ -218,7 +224,76 @@ def verifier_crl(cert):
     print("Le certificat n'est pas révoqué.")
     return False
 
+def generate_key():
+    #creation des clés publique et privé du client
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
 
+    public_key = private_key.public_key()
+
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    # Écrire les clés dans des fichiers
+    with open(f'key/private_key_client{numero_client}.pem', 'wb') as f:
+        f.write(private_pem)
+
+    with open(f'key/public_key_client{numero_client}.pem', 'wb') as f:
+        f.write(public_pem)
+
+def chiffre_message(id_vendeur,message):
+    with open(f'key/public_key_{id_vendeur}', 'rb') as f:
+        public_key_pem = f.read()
+
+    public_key = serialization.load_pem_public_key(
+        public_key_pem,
+        password=None,
+    )
+
+    #chiffrer le message
+    message_chiffre = public_key.encrypt(
+            message,
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return message_chiffre
+
+def dechiffre_message(message):
+    with open(f'key/private_key_client{numero_client}', 'rb') as f:
+        public_key_pem = f.read()
+    
+    private_key = serialization.load_pem_public_key(
+        public_key_pem,
+        password=None,
+    )
+
+    #dechiffrer le message
+    message_dechiffre = private_key.decrypt(
+            message,
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return message_dechiffre
+
+    
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
 # message_ca = {
 #     'type': 'demande_cle_publique_ca',
@@ -232,7 +307,24 @@ def verifier_crl(cert):
 
 # client.loop_start()
 
-envoyer_messages()
+generate_key()
+
+#après avoir générer ses clés, le client commence par demander
+#à la CA sa clé pblique pour pouvoir vérifier les certificats
+#le clien envoie aussi sa clé publique pour des communications sécurisés
+with open(f'key/public_key_client_{numero_client}.pem', 'rb') as f:
+    public_key_pem = f.read()
+
+message_ca = {
+    'type': 'demande_cle_publique_ca',
+    'id': f'client{numero_client}',
+    'public_key_client': public_key_pem.decode('utf-8')
+}
+
+json_data_crl = json.dumps(message_ca)
+client.publish(topic_ca, json_data_crl)
+
+#envoyer_messages()
 
 # client.loop_stop()
 # client.publish(topic_vendeur1,json_data_vendeur)

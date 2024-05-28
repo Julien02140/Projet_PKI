@@ -49,17 +49,32 @@ def on_message(client, userdata, msg):
         with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
             f.write(cert)
     if message['type'] == 'demande_certificat_vendeur':
+        #premier message recu de la part du client
+        #donc le le client donne sa clé publique pour ensuite communiquer de façon sécurisé
+
+        #extraction de la clé publique
+        print("cle publique du client recu")
+        public_key = message.get('public_key_client', None)
+        public_key = public_key.encode('utf-8')
+
+        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
+            f.write(public_key)
+        
         print(f"demande de certificat recu de la part du {message['id']}")
+
         with open(f'cert_vendeur{numero_vendeur}.pem', 'rb') as f:
             certificat = f.read()
+
         reponse = {
             'type': 'retour_demande_de_certificat',
             'id': f'vendeur{numero_vendeur}',
             'certificat': certificat.decode('utf-8')
         }
+
         json_data = json.dumps(reponse)
         print("envoie du certificat au client \n")
         client.publish(f"vehicule/JH/{message['id']}",json_data)
+
 
 
     # received_data = msg.payload.decode().split(',')
@@ -117,6 +132,47 @@ def generate_csr():
     with open(f"public_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(public_key_pem)
 
+def chiffrer_message(id_client,message):
+    with open(f'key/public_key_{id_client}', 'rb') as f:
+        public_key_pem = f.read()
+
+    public_key = serialization.load_pem_public_key(
+        public_key_pem,
+        password=None,
+    )
+
+    #chiffrer le message
+    message_chiffrer = public_key.encrypt(
+            message,
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return message_chiffrer
+
+def dechiffrer_message(message):
+    with open(f'key/private_key_client_{numero_client}', 'rb') as f:
+        public_key_pem = f.read()
+    
+    private_key = serialization.load_pem_public_key(
+        public_key_pem,
+        password=None,
+    )
+
+    #dechiffrer le message
+    message_dechiffrer = private_key.decrypt(
+            message,
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return message_dechiffrer
 
 client.on_message = on_message
 client.on_connect = on_connect

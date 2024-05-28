@@ -279,6 +279,14 @@ def on_message(client, userdata, msg):
 
     if message['type'] == 'demande_cle_publique_ca':
 
+        #extraction de la clé publique
+        print("cle publique du client recu")
+        public_key = message.get('public_key_client', None)
+        public_key = public_key.encode('utf-8')
+
+        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
+            f.write(public_key)
+
         print(f"demande de la clé publique de la part du {message['id']}")
         with open("pem/cert_ca.pem", "rb") as f:
             ca_cert = f.read()
@@ -319,7 +327,8 @@ def on_message(client, userdata, msg):
             client.publish(f"vehicule/JH/{message['id']}",json_data)
 
             # Pour créer le scénario où le client trouve que le certificat est révoqué dans la CRL
-            if message['id'] == 'vendeur2':
+            #c'est le vendeur 3 qui a un certificat révoqué
+            if message['id'] == 'vendeur3':
                 add_certificat_crl(message['id'])
         else: 
             print('Erreur avec la signature')
@@ -374,8 +383,10 @@ def get_crl(numero_vendeur):
 
     with open("key/public_key_ca.pem", "wb") as f:
         f.write(public_key_pem)
-
+ 
     return public_key_pem
+
+
 client.loop_forever()
 
 
