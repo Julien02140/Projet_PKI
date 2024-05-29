@@ -6,6 +6,10 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import sys,os,json
 
 numero_vendeur = sys.argv[1]
 mqtt_broker_address = "194.57.103.203"
@@ -48,6 +52,7 @@ def on_message(client, userdata, msg):
         cert = eval(cert.encode('utf-8'))
         with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
             f.write(cert)
+
     if message['type'] == 'demande_certificat_vendeur':
         #premier message recu de la part du client
         #donc le le client donne sa clé publique pour ensuite communiquer de façon sécurisé
@@ -75,6 +80,30 @@ def on_message(client, userdata, msg):
         print("envoie du certificat au client \n")
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
+    if message['type'] == 'envoie_cle_AES':
+        #Le vendeur recoit la clé AES du client
+        #déchiffrer en utilisant la cle publique du vendeur
+
+        id = message['id']
+        AES_key = dechiffre_message(message['AES_key'])
+        AES_iv = dechiffre_message(message['AES_iv'])
+
+        with open(f'key/AES_key_{id}') as AES_key_file:
+            AES_key_file.write(AES_key)
+
+        with open(f'key/AES_iv_{id}') as AES_iv_file:
+            AES_iv_file.write(AES_iv)
+
+        print(f'cle AES recu de la part du {id}')
+
+        message_client = {
+            'type': 'AES_recu',
+            'id': f'vendeur{numero_vendeur}',
+        }
+
+        json_data = json.dumps(message_client)
+        print("envoie de la réponse au client, AES bien recu \n")
+        client.publish(f"vehicule/JH/{id}",json_data)
 
     # received_data = msg.payload.decode().split(',')
     # type_demande = received_data[0]
@@ -94,11 +123,13 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.subscribe(topic)
 
 def generate_csr():
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-        backend=default_backend()
-    )
+    
+    #charger la clé privée
+    with open(f'key/private_key_vendeur{numero_vendeur}.pem', 'rb') as private_key_pem:
+        private_key_pem.read()
+
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+
     name = x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, f"vendeur{numero_vendeur}"),
     ])
@@ -131,6 +162,33 @@ def generate_csr():
     with open(f"public_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(public_key_pem)
 
+def generate_key():
+    #creation des clés publique et privé du client
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    public_key = private_key.public_key()
+
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    # Écrire les clés dans des fichiers
+    with open(f'key/private_key_vendeur{numero_vendeur}.pem', 'wb') as f:
+        f.write(private_pem)
+
+    with open(f'key/public_key_vendeur{numero_vendeur}.pem', 'wb') as f:
+        f.write(public_pem)
+
 def chiffrer_message(id_client,message):
     with open(f'key/public_key_{id_client}', 'rb') as f:
         public_key_pem = f.read()
@@ -152,8 +210,8 @@ def chiffrer_message(id_client,message):
 
     return message_chiffrer
 
-def dechiffrer_message(message):
-    with open(f'key/private_key_client_{numero_client}', 'rb') as f:
+def dechiffre_message(message):
+    with open(f'key/private_key_vendeur_{numero_vendeur}', 'rb') as f:
         public_key_pem = f.read()
     
     private_key = serialization.load_pem_public_key(
@@ -173,13 +231,57 @@ def dechiffrer_message(message):
 
     return message_dechiffrer
 
+def chiffre_message_AES(id_receveur,message):
+    #le message doit être en byte pour âtre chiffré
+    #ne fonctionne pas avec les strings
+    with open(f'key/AES_key_{id_receveur}.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_{id_receveur}.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(message) + encryptor.finalize()
+
+    return ct
+
+def dechiffre_message_AES(id_envoyeur,message):
+    with open(f'key/AES_key_{id_envoyeur}.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_{id_envoyeur}.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+
+    decryptor = cipher.decryptor()
+    message_dechiffre = decryptor.update(message) + decryptor.finalize()
+
+    return message_dechiffre
+
 client.on_message = on_message
 client.on_connect = on_connect
+
+#générer clé publique et privée
+generate_key()
+
+#générer clé AES pour la Ca
+AES_key_ca = os.urandom(32)
+AES_iv_ca = os.urandom(16) 
+
+with open(f'key/AES_key_vendeur{numero_vendeur}_ca') as f:
+    f.write(AES_key_ca)
+
+with open(f'key/AES_iv_vendeur{numero_vendeur}_ca') as f:
+    f.write(AES_iv_ca)
+
 
 # client.publish(topic_ca, ','.join(map(str, ['demande_certificat',numero_vendeur])))
 message = {
     'type': 'demande_connexion',
-    'id': f'vendeur{numero_vendeur}'
+    'id': f'vendeur{numero_vendeur}',
+    
 }
 json_data = json.dumps(message)
 client.publish(topic_ca,json_data)
