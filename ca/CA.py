@@ -324,20 +324,23 @@ def on_message(client, userdata, msg):
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
     if message['type'] == 'demande_connexion':
-        #la recoit la clé publique du vendeur
-        public_key = message['public_key_vendeur'].encode('utf-8')
-        
-        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
-            f.write(public_key)
-        
-        print(f"clé publique du {message['id']} recu")
+        #obtention de la clé AES du vendeur
+        print("cle AES du vendeur recu")
+        AES_key_vendeur = dechiffre_message(message['AES_key_vendeur'])
+        AES_iv_vendeur = dechiffre_message(message['AES_iv_vendeur'])
 
-        with open("key/public_key_ca.pem", "rb") as f:
-            public_key_pem = f.read()
+        with open(f"key/AES_key_{message['id']}_ca.bin", "wb") as f:
+            f.write(AES_key_vendeur)
+
+        with open(f"key/AES_iv_{message['id']}_ca.bin", "wb") as f:
+            f.write(AES_iv_vendeur)
+
+
+        print(f"clé AES du {message['id']} recu")
 
         reponse = {
             'type': 'connexion_acceptee',
-            'public_key': public_key_pem.decode('utf-8') #convertir en str 
+            'id': 'ca' 
         }
 
         print(f"demande de connexion reçu de la part du {message['id']}\n")
@@ -346,6 +349,7 @@ def on_message(client, userdata, msg):
         print("envoie connexion actepte à vendeur")
 
     elif message['type'] == 'demande_certificat':
+
         print(f"demande de certificat de la part du {message['id']} \n")
         csr = message.get('csr', None)
         #déchiffrer avec AES
@@ -354,9 +358,11 @@ def on_message(client, userdata, msg):
         print("verification de la signature du csr")
         if verify_signature(csr):
             cert = str(emit_certificate(csr,message['id']))
+            cert_chiffre = chiffre_message_AES(message['id'],cert)
             reponse = {
                 'type': 'envoi_certificat',
-                'certificat': cert
+                'id': 'ca',
+                'certificat': cert_chiffre
             }
             json_data = json.dumps(reponse)
             print("signature du csr correct")
@@ -398,14 +404,16 @@ def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
     client.subscribe(topic)
 
-def dechiffre_message(message):
-    with open(f'key/key_ca.pem', 'rb') as f:
-        public_key_pem = f.read()
-    
-    private_key = serialization.load_pem_public_key(
-        public_key_pem,
-        password=None,
+def dechiffre_message(message64):
+    with open('key/key_ca.key','rb') as f:
+        private_key_pem = f.read()
+
+    private_key = serialization.load_pem_private_key(
+        private_key_pem,
+        password=None
     )
+
+    message = base64.b64decode(message64)
 
     #dechiffrer le message
     message_dechiffre = private_key.decrypt(
