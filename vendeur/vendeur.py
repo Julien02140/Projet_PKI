@@ -34,15 +34,47 @@ def on_message(client, userdata, msg):
     message = json.loads(json_data)
     if message['type'] == 'connexion_acceptee':
         print("connexion accepté reçu\n")
+        print("envoie de la clé AES")
+
+        #ouvrir les fichiers contenant la clé AES et l'iv
+        with open(f'key/AES_key_vendeur{numero_vendeur}_{message['id']}.bin', 'rb') as AES_key_file:
+            AES_key_file.read()
+
+        with open(f'key/AES_iv_vendeur{numero_vendeur}_{message['id']}.bin', 'rb') as AES_iv_file:
+            AES_iv_file.read()
+
+        #le vendeur chiffre les informations avec la clé publique de la CA
+        AES_key_chiffre = chiffre_message(message['id'],AES_key_file)
+        AES_iv_chiffre = chiffre_message(message['id'],AES_iv_file)
+
+        reponse = {
+            'type': 'envoie_cle_AES_vendeur',
+            'id': f'vendeur{numero_vendeur}',
+            'AES_key': AES_key_chiffre,
+            'AES_iv': AES_iv_chiffre
+        }
+
+        json_data = json.dumps(reponse)
+        client.publish(topic_ca,json_data)
+
+    if message['type'] == 'retour_ca_AES':
+        #La CA a bine recu la clé AES
+        #Le vendeur peut donc commencé à générer son csr
+
         print("génération du csr et envoie du csr à la CA")
         generate_csr()
         with open(f"csr_vendeur{numero_vendeur}.pem", "rb") as f:
             contenu = str(f.read())
+
+        #chiffrer le csr avec AES
+        contenu_chiffre = chiffre_message_AES(message['id'],contenu)
+
         reponse = {
             'type': 'demande_certificat',
             'id': f'vendeur{numero_vendeur}',
-            'csr': contenu
+            'csr': contenu_chiffre
         }
+
         json_data = json.dumps(reponse)
         client.publish(topic_ca,json_data)
 
@@ -53,18 +85,8 @@ def on_message(client, userdata, msg):
         with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
             f.write(cert)
 
-    if message['type'] == 'demande_certificat_vendeur':
-        #premier message recu de la part du client
-        #donc le le client donne sa clé publique pour ensuite communiquer de façon sécurisé
-
-        #obtention de la clé publique du client
-        print("cle publique du client recu")
-        public_key = message.get('public_key_client', None)
-        public_key = public_key.encode('utf-8')
-
-        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
-            f.write(public_key)
-        
+    if message['type'] == 'demande_certificat_client':
+        #premier message recu de la part du client    
         print(f"demande de certificat recu de la part du {message['id']}")
 
         with open(f'cert_vendeur{numero_vendeur}.pem', 'rb') as f:
@@ -80,7 +102,7 @@ def on_message(client, userdata, msg):
         print("envoie du certificat au client \n")
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
-    if message['type'] == 'envoie_cle_AES':
+    if message['type'] == 'envoie_cle_AES_client':
         #Le vendeur recoit la clé AES du client
         #déchiffrer en utilisant la cle publique du vendeur
 
@@ -88,16 +110,16 @@ def on_message(client, userdata, msg):
         AES_key = dechiffre_message(message['AES_key'])
         AES_iv = dechiffre_message(message['AES_iv'])
 
-        with open(f'key/AES_key_{id}') as AES_key_file:
+        with open(f'key/AES_key_vendeur{numero_vendeur}_{id}') as AES_key_file:
             AES_key_file.write(AES_key)
 
-        with open(f'key/AES_iv_{id}') as AES_iv_file:
+        with open(f'key/AES_iv_vendeur{numero_vendeur}_{id}') as AES_iv_file:
             AES_iv_file.write(AES_iv)
 
         print(f'cle AES recu de la part du {id}')
 
         message_client = {
-            'type': 'AES_recu',
+            'type': 'AES_recu_vendeur',
             'id': f'vendeur{numero_vendeur}',
         }
 
@@ -189,8 +211,8 @@ def generate_key():
     with open(f'key/public_key_vendeur{numero_vendeur}.pem', 'wb') as f:
         f.write(public_pem)
 
-def chiffrer_message(id_client,message):
-    with open(f'key/public_key_{id_client}', 'rb') as f:
+def chiffre_message(id_client,message):
+    with open(f'key/public_key_vendeur{numero_vendeur}_{id_client}', 'rb') as f:
         public_key_pem = f.read()
 
     public_key = serialization.load_pem_public_key(
@@ -234,10 +256,10 @@ def dechiffre_message(message):
 def chiffre_message_AES(id_receveur,message):
     #le message doit être en byte pour âtre chiffré
     #ne fonctionne pas avec les strings
-    with open(f'key/AES_key_{id_receveur}.bin', 'rb') as AES_key_file:
+    with open(f'key/AES_key_vendeur{numero_vendeur}_{id_receveur}.bin', 'rb') as AES_key_file:
         AES_key_file.read()
 
-    with open(f'key/AES_iv_{id_receveur}.bin', 'rb') as AES_iv_file:
+    with open(f'key/AES_iv_vendeur{numero_vendeur}_{id_receveur}.bin', 'rb') as AES_iv_file:
         AES_iv_file.read()
 
     cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
@@ -247,10 +269,10 @@ def chiffre_message_AES(id_receveur,message):
     return ct
 
 def dechiffre_message_AES(id_envoyeur,message):
-    with open(f'key/AES_key_{id_envoyeur}.bin', 'rb') as AES_key_file:
+    with open(f'key/AES_key_vendeur{numero_vendeur}_{id_envoyeur}.bin', 'rb') as AES_key_file:
         AES_key_file.read()
 
-    with open(f'key/AES_iv_{id_envoyeur}.bin', 'rb') as AES_iv_file:
+    with open(f'key/AES_iv_vendeur{numero_vendeur}_{id_envoyeur}.bin', 'rb') as AES_iv_file:
         AES_iv_file.read()
 
     cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
@@ -267,22 +289,26 @@ client.on_connect = on_connect
 generate_key()
 
 #générer clé AES pour la Ca
-AES_key_ca = os.urandom(32)
-AES_iv_ca = os.urandom(16) 
+AES_key_vendeur_ca = os.urandom(32)
+AES_iv_vendeur_ca = os.urandom(16) 
 
 with open(f'key/AES_key_vendeur{numero_vendeur}_ca') as f:
-    f.write(AES_key_ca)
+    f.write(AES_key_vendeur_ca)
 
 with open(f'key/AES_iv_vendeur{numero_vendeur}_ca') as f:
-    f.write(AES_iv_ca)
+    f.write(AES_iv_vendeur_ca)
 
+#ouvrir la clé publique
+with open(f'key/public_key_vendeur{numero_vendeur}.pem', 'rb') as f:
+    public_key = f.read()
 
-# client.publish(topic_ca, ','.join(map(str, ['demande_certificat',numero_vendeur])))
+#envoyer une demande de connexion à la Ca et lui donner la clé publique
 message = {
     'type': 'demande_connexion',
     'id': f'vendeur{numero_vendeur}',
-    
+    'public_key_vendeur': public_key.decode('utf-8')
 }
+
 json_data = json.dumps(message)
 client.publish(topic_ca,json_data)
 

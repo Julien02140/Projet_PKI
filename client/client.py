@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from datetime import datetime, timezone, timedelta
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import sys,os,json
 import base64
 import time
@@ -43,7 +44,10 @@ def on_message(client, userdata, msg):
         #seul le client 1 et 2 arrive dans cet boucle
         #crl de la CA reu
         print("j'ai recu la crl \n")
-        crl = message.get('crl', None)
+
+        id = message['id']
+
+        crl = dechiffre_message_AES(id,message['crl'])
 
         if crl != None:
         
@@ -66,77 +70,26 @@ def on_message(client, userdata, msg):
             print("CRL vide \n")
             print("Certificat non révoqué \n")
 
-    if message['type'] == 'retour_cle_publique_ca':
-        print("cle publique de la CA reçu")
-        public_key = message.get('public_key', None)
-        public_key = public_key.encode('utf-8')
-        with open(f"public_key_ca.pem", "wb") as f:
-            f.write(public_key)
+    if message['type'] == 'retour_cle_AES_ca':
 
-        #le client et la ca ont échangés leurs clés publiques
-        #pour pouvoir échanger des messages sécurisés plus long
-        #ou des fichiers, le client va aussi donné sa clé AES
+        #La CA a bien recu la clé AES
 
-
-        #le client chiffre les informations avec la clé publique de la CA
-        id_chiffre = chiffre_message('ca',f'client{numero_client}')
-        AES_key_chiffre = chiffre_message('ca',AES_key)
-        AES_iv_chiffre = chiffre_message('ca',AES_iv)
-
-        message_ca = {
-            'type': 'envoie_cle_AES',
-            'id': id_chiffre,
-            'AES_key': AES_key_chiffre,
-            'AES_iv': AES_iv_chiffre
-        }
-
-        json_data_ca = json.dumps(message_ca)
-        client.publish(topic_vendeur,json_data_ca)
-
-        #le client a recu la clé publique de la CA, il peut maintenant
-        #vérifier les certificats signés par celle-ci
-        #il peut maintenant demander au vendeur son certificat
-
+        #On peut commencé les échanges avec le vendeur
+        #Le client va demandé le certificat au vendeur
         message_vendeur = {
-            'type': 'demande_certificat_vendeur',
+            'type': 'demande_certificat_client',
             'id': f'client{numero_client}',
-            'public_key_client': public_key_pem.decode('utf-8')
         }
 
         json_data_vendeur = json.dumps(message_vendeur)
         client.publish(topic_vendeur,json_data_vendeur)
-
-    if message['type'] == 'retour_test_public_key':
-        print("message chiffre pour test reçu \n")
-        msg = message['content']
-        print(f"message reçu : {message['content']} \n")
-        signature = message['signature']
-        signature = base64.b64decode(signature)
-
-        with open("public_key_ca.pem", "rb") as f:
-            ca_public_key = f.read()
-        
-        ca_public_key = serialization.load_pem_public_key(ca_public_key, backend=default_backend())
-        
-        try:
-            ca_public_key.verify(
-                signature,
-                msg.encode('utf-8'),
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-                hashes.SHA256()
-            )
-            print("La signature est valide.")
-        except:
-            print("La signature est invalide.")     
 
     if message['type'] == 'retour_demande_de_certificat':
         #le client a recu le certificat
         print(f"certificat reçu de la part du {message['id']}")
         cert_str = message.get('certificat',None)
         cert_encode = cert_str.encode('utf-8')
+
         with open(f'cert_{message["id"]}.pem', 'wb') as c:
             c.write(cert_encode)
         
@@ -146,24 +99,63 @@ def on_message(client, userdata, msg):
 
         if bool == True:
             print("certificat valide")
+
+            #si le certificat est valide alors le client va extraire la clé publique du certificat
+            
+            public_key_vendeur = cert.public_key()
+            public_key_pem = public_key_vendeur.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+
+            with open(f"key/public_key_{message['id']}.pem", "wb") as f:
+                f.write(public_key_pem)
+
+            #maintenant on peut envoyer la clé AES chiffré avec la clé publique du vendeur
+
+            with open(f'key/AES_key_client{numero_client}_{message['id']}','rb') as AES_key:
+                AES_key.read()
+
+            with open(f'key/AES_iv_client{numero_client}_{message['id']}','rb') as AES_iv:
+                AES_iv.read()
+
+            AES_key_chiffre = chiffre_message(message['id'],AES_key)
+            AES_iv_chiffre = chiffre_message(message['id'],AES_iv)
+            id_chiffre = chiffre_message(message['id'],f'client{numero_client}')                                
+
+            message_vendeur = {
+                    'type': 'envoie_cle_AES_client',
+                    'id': id_chiffre,
+                    'AES_key': AES_key_chiffre,
+                    'AES_iv': AES_iv_chiffre
+            }
+
+            json_data_vendeur = json.dumps(message_vendeur)
+            client.publish(topic_vendeur,json_data_vendeur)    
+
         else:
             print("certificat non valide")
 
-        
+    if message['type'] == 'AES_recu_vendeur':
+        #le vendeur a bien recu la clé AES
+
         if(numero_client == "1"):
             print("fin du scénario 1")
+
         else:
             #le scénario 2 et 3 continue
             #le client demande la crl à la CA
 
+            id_chiffre = chiffre_message_AES('ca',f'client{numero_client}')
+
             message_crl = {
                 'type': 'demande_crl',
-                'id': f'client{numero_client}' 
+                'id': id_chiffre
             }
 
             json_data = json.dumps(message_crl)
             client.publish(topic_ca, json_data)
-
+        
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
@@ -318,6 +310,35 @@ def dechiffre_message(message):
 
     return message_dechiffre
 
+def chiffre_message_AES(id_receveur,message):
+    #le message doit être en byte pour âtre chiffré
+    #ne fonctionne pas avec les strings
+    with open(f'key/AES_key_client{numero_client}_{id_receveur}.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_client{numero_client}_{id_receveur}.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(message) + encryptor.finalize()
+
+    return ct
+
+def dechiffre_message_AES(id_envoyeur,message):
+    with open(f'key/AES_key_client{numero_client}_{id_envoyeur}.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_client{numero_client}_{id_envoyeur}.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+
+    decryptor = cipher.decryptor()
+    message_dechiffre = decryptor.update(message) + decryptor.finalize()
+
+    return message_dechiffre
+
     
 #demande de la clé publique de la CA, le client en a besoin poour vérfifier la signature des certificats
 # message_ca = {
@@ -332,22 +353,39 @@ print(f"client numero : {numero_client} démarre")
 
 # client.loop_start()
 
-generate_key()
 
-#générer la clé AES
-AES_key = os.urandom(32)
-AES_iv = os.urandom(16) 
+#le client n'a pas besoin de clés asymétrique
+#il va envoyer sa clé asymétrique chiffré avec la clé publique de la CA 
 
-#après avoir générer ses clés, le client commence par demander
-#à la CA sa clé pblique pour pouvoir vérifier les certificats
-#le clien envoie aussi sa clé publique pour des communications sécurisés
-with open(f'key/public_key_client{numero_client}.pem', 'rb') as f:
-    public_key_pem = f.read()
+#générer la clé AES pour communiquer avec la CA
+AES_key_client_ca = os.urandom(32)
+AES_iv_client_ca = os.urandom(16) 
+
+with open(f'key/AES_key_client{numero_client}_ca') as f:
+    f.write(AES_key_client_ca)
+
+with open(f'key/AES_iv_client{numero_client}_ca') as f:
+    f.write(AES_iv_client_ca)
+
+#génerer la clé AES pour communiquer avec le vendeur
+AES_key_client_vendeur = os.urandom(32)
+AES_iv_client_vendeur = os.urandom(16) 
+
+with open(f'key/AES_key_client{numero_client}_vendeur{numero_client}') as f:
+    f.write(AES_key_client_vendeur)
+
+with open(f'key/AES_iv_client{numero_client}_vendeur{numero_client}') as f:
+    f.write(AES_iv_client_vendeur)
+
+
+AES_key_chiffre = chiffre_message('ca',AES_key_client_ca)
+AES_iv_chiffre = chiffre_message('ca',AES_iv_client_ca)
 
 message_ca = {
-    'type': 'demande_cle_publique_ca',
+    'type': 'envoie_cle_AES_client',
     'id': f'client{numero_client}',
-    'public_key_client': public_key_pem.decode('utf-8')
+    'AES_key_client': AES_key_chiffre,
+    'AES_iv_client' : AES_iv_chiffre
 }
 
 json_data_crl = json.dumps(message_ca)
