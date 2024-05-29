@@ -92,6 +92,14 @@ def generate_certif_ca():
     with open(f'key/public_key_ca.pem', 'wb') as f:
         f.write(public_pem)
 
+    #le client et le vendeur ont accès aussi à la clé publique
+    with open(f'../client/key/public_key_ca.pem', 'wb') as f:
+        f.write(public_pem)
+
+    with open(f'../vendeur/key/public_key_ca.pem', 'wb') as f:
+        f.write(public_pem)
+
+
     #on doit aussi creer un fichier pem
     #ce fichier contient le certificat et la clé privée
     with open(f'pem/cert_ca.pem','wb') as c:
@@ -273,70 +281,66 @@ def on_message(client, userdata, msg):
     json_data = msg.payload.decode('utf-8')
     message = json.loads(json_data)
 
-    if message['type'] == 'envoie_cle_AES':
+    if message['type'] == 'envoie_cle_AES_client':
         #déchiffrer en utilisant la cle publique de la ca
         id = dechiffre_message(message['id'])
         AES_key = dechiffre_message(message['AES_key'])
         AES_iv = dechiffre_message(message['AES_iv'])
 
-        AES_file = {'key': AES_key, 'AES_iv': AES_iv}
+        with open(f'key/AES_key_{id}') as AES_key_file:
+            AES_key_file.write(AES_key)
 
-        with open(f"key/AES_key_{id}.json", 'w') as f:
-            json.dumps(AES_file,f)
+        with open(f'key/AES_iv_{id}') as AES_iv_file:
+            AES_iv_file.write(AES_iv)
 
         print(f'cle AES recu de la part du {id}')
 
-    if message['type'] == 'test_public_key':
-
-        print("demande de test de la cle de la part du client \n")
-        with open("key/key_ca.key", "rb") as f:
-            ca_key = f.read()
-        private_key = serialization.load_pem_private_key(ca_key, password=None)
-        msg = "hello world, voici un message signé avec ma cle"
-        signature = private_key.sign(
-            msg.encode('utf-8'),
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
-
         reponse = {
-            'type': 'retour_test_public_key',
-            'content': msg,
-            'signature': base64.b64encode(signature).decode('utf-8')
+            'type' : 'retour_cle_AES_ca',
+            'id' : 'ca',
         }
-        json_data = json.dumps(reponse)
-        client.publish(f"vehicule/JH/{message['id']}",json_data)
 
-    if message['type'] == 'demande_cle_publique_ca':
+    if message['type'] == 'envoie_cle_AES_client':
 
-        #obtenetion de la clé publique du client
-        print("cle publique du client recu")
-        public_key = message.get('public_key_client', None)
-        public_key = public_key.encode('utf-8')
+        #obtention de la clé AES du client
+        print("cle AES du client recu")
+        AES_key = dechiffre_message(message['AES_key_client'])
+        AES_iv = dechiffre_message(message['AES_iv_client'])
 
-        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
-            f.write(public_key)
+        with open(f"key/AES_key_{message['id']}_ca.pem", "wb") as f:
+            f.write(AES_key)
 
-        print(f"demande de la clé publique de la CA de la part du {message['id']}")
+        with open(f"key/AES_iv_{message['id']}_ca.pem", "wb") as f:
+            f.write(AES_iv)
 
-        with open("key/public_key_ca.pem", "rb") as f:
-            public_key_pem = f.read()
+        print(f"clé AES du {message['id']} recu")
 
         reponse = {
-            'type': 'retour_cle_publique_ca',
-            'public_key': public_key_pem.decode('utf-8') #convertir en str 
+            'type': 'retour_cle_AES_ca',
+            'id': 'ca'
         }
 
         json_data = json.dumps(reponse)
         client.publish(f"vehicule/JH/{message['id']}",json_data)
 
     if message['type'] == 'demande_connexion':
+        #la recoit la clé publique du vendeur
+        public_key = message['public_key_vendeur'].encode('utf-8')
+        
+        with open(f"key/public_key_{message['id']}.pem", "wb") as f:
+            f.write(public_key)
+        
+        print(f"clé publique du {message['id']} recu")
+
+        with open("key/public_key_ca.pem", "rb") as f:
+            public_key_pem = f.read()
+
+        reponse = {
+            'type': 'connexion_acceptee',
+            'public_key': public_key_pem.decode('utf-8') #convertir en str 
+        }
 
         print(f"demande de connexion reçu de la part du {message['id']}\n")
-        reponse = {'type': 'connexion_acceptee'}
         json_data = json.dumps(reponse)
         client.publish(f"vehicule/JH/{message['id']}",json_data)
         print("envoie connexion actepte à vendeur")
@@ -344,6 +348,8 @@ def on_message(client, userdata, msg):
     elif message['type'] == 'demande_certificat':
         print(f"demande de certificat de la part du {message['id']} \n")
         csr = message.get('csr', None)
+        #déchiffrer avec AES
+        csr = dechiffre_message_AES(message['id'],csr)
         csr = eval(csr.encode('utf-8'))
         print("verification de la signature du csr")
         if verify_signature(csr):
@@ -365,6 +371,8 @@ def on_message(client, userdata, msg):
 
     elif message['type'] == 'demande_crl':
 
+        id = message['id']
+
         print(f"demande de crl de la part du {message['id']} \n")
 
         try:
@@ -375,9 +383,12 @@ def on_message(client, userdata, msg):
             print("Le fichier n'existe pas, crl vide")
             crl_data = None
 
+        #chiffre la crl
+        crl_data_chiffre = chiffre_message_AES(id,crl_data)
+
         reponse = {
             'type': 'envoie_crl',
-            'crl': crl_data
+            'crl': crl_data_chiffre
         }
 
         json_data = json.dumps(reponse)
@@ -408,7 +419,37 @@ def dechiffre_message(message):
 
     return message_dechiffre
 
+def chiffre_message_AES(id_receveur,message):
+    #le message doit être en byte pour âtre chiffré
+    #ne fonctionne pas avec les strings
+    with open(f'key/AES_key_{id_receveur}_ca.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_{id_receveur}_ca.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(message) + encryptor.finalize()
+
+    return ct
+
+def dechiffre_message_AES(id_envoyeur,message):
+    with open(f'key/AES_key_{id_envoyeur}_ca.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
+
+    with open(f'key/AES_iv_{id_envoyeur}_ca.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
+
+    cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+
+    decryptor = cipher.decryptor()
+    message_dechiffre = decryptor.update(message) + decryptor.finalize()
+
+    return message_dechiffre
+
     
+ 
 generate_certif_ca()
 
 #generer un dossier crl et un fichier vide pour la crl
