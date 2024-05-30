@@ -1,18 +1,17 @@
 import paho.mqtt.client as mqtt
 import paho.mqtt
 from cryptography import x509
-from cryptography.x509.oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.asymmetric import padding as pad
 import sys,os,json
 import base64
-import time
+
 
 # Paramètres MQTT
 numero_client = sys.argv[1]

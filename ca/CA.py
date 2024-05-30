@@ -1,10 +1,6 @@
-#utiliser pyOpenSSL
-#https://www.youtube.com/watch?v=QhQFEmbRmsY
-#pour les communication, en https on peut creer une api flask
-#mais pour le projet, on utilise des fils mqtt
 import paho.mqtt.client as mqtt
 import paho.mqtt
-import ssl, time, inspect, os, json
+import os, json
 from datetime import datetime, timezone, timedelta
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -14,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric import padding as pad
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
-from cryptography.x509 import load_pem_x509_certificate, RevokedCertificate
+from cryptography.x509 import load_pem_x509_certificate
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 import base64
