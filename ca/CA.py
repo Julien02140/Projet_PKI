@@ -10,11 +10,13 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa,padding
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding as pad
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
 from cryptography.x509 import load_pem_x509_certificate, RevokedCertificate
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
 import base64
 
 # Paramètres MQTT
@@ -117,7 +119,7 @@ def verify_signature(csr_file):
         csr.public_key().verify(
             signature,
             tbs_certificate_bytes,
-            padding.PKCS1v15(),  # Utiliser le même padding que lors de la signature
+            pad.PKCS1v15(),  # Utiliser le même padding que lors de la signature
             csr.signature_hash_algorithm,
         )
         return True  # La signature est valide
@@ -283,17 +285,16 @@ def on_message(client, userdata, msg):
 
     if message['type'] == 'envoie_cle_AES_client':
         #déchiffrer en utilisant la cle publique de la ca
-        id = dechiffre_message(message['id'])
-        AES_key = dechiffre_message(message['AES_key'])
-        AES_iv = dechiffre_message(message['AES_iv'])
+        AES_key = dechiffre_message(message['AES_key_client'])
+        AES_iv = dechiffre_message(message['AES_iv_client'])
 
-        with open(f'key/AES_key_{id}') as AES_key_file:
-            AES_key_file.write(AES_key)
+        with open(f"key/AES_key_{message['id']}_ca.bin","wb") as f:
+            f.write(AES_key)
 
-        with open(f'key/AES_iv_{id}') as AES_iv_file:
-            AES_iv_file.write(AES_iv)
+        with open(f"key/AES_iv_{message['id']}_ca.bin","wb") as f:
+            f.write(AES_iv)
 
-        print(f'cle AES recu de la part du {id}')
+        print(f"cle AES recu de la part du {message['id']}")
 
         reponse = {
             'type' : 'retour_cle_AES_ca',
@@ -354,7 +355,7 @@ def on_message(client, userdata, msg):
         csr = message.get('csr', None)
         #déchiffrer avec AES
         csr = dechiffre_message_AES(message['id'],csr)
-        csr = eval(csr.encode('utf-8'))
+        csr = eval(csr.decode('utf-8'))
         print("verification de la signature du csr")
         if verify_signature(csr):
             cert = str(emit_certificate(csr,message['id']))
@@ -387,13 +388,14 @@ def on_message(client, userdata, msg):
                 crl_data = crl_data.decode('utf-8')
         except FileNotFoundError:
             print("Le fichier n'existe pas, crl vide")
-            crl_data = None
+            crl_data = "None"
 
         #chiffre la crl
         crl_data_chiffre = chiffre_message_AES(id,crl_data)
 
         reponse = {
             'type': 'envoie_crl',
+            'id' : 'ca',
             'crl': crl_data_chiffre
         }
 
@@ -415,11 +417,12 @@ def dechiffre_message(message64):
 
     message = base64.b64decode(message64)
 
+
     #dechiffrer le message
     message_dechiffre = private_key.decrypt(
             message,
-            padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            pad.OAEP(
+            mgf=pad.MGF1(algorithm=hashes.SHA256()),
             algorithm=hashes.SHA256(),
             label=None
         )
@@ -430,29 +433,43 @@ def dechiffre_message(message64):
 def chiffre_message_AES(id_receveur,message):
     #le message doit être en byte pour âtre chiffré
     #ne fonctionne pas avec les strings
-    with open(f'key/AES_key_{id_receveur}_ca.bin', 'rb') as AES_key_file:
-        AES_key_file.read()
 
-    with open(f'key/AES_iv_{id_receveur}_ca.bin', 'rb') as AES_iv_file:
-        AES_iv_file.read()
+    message = message.encode('utf-8')
+
+    with open(f'key/AES_key_{id_receveur}_ca.bin', 'rb') as f:
+        AES_key_file = f.read()
+
+    with open(f'key/AES_iv_{id_receveur}_ca.bin', 'rb') as f:
+        AES_iv_file = f.read()
 
     cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
     encryptor = cipher.encryptor()
-    ct = encryptor.update(message) + encryptor.finalize()
+    padder = padding.PKCS7(algorithms.AES.block_size).padder()
+    padded_contenu = padder.update(message) + padder.finalize()
+    ct = encryptor.update(padded_contenu) + encryptor.finalize()
 
-    return ct
+    message_chiffre_base64 = base64.b64encode(ct).decode('utf-8')
+
+    return message_chiffre_base64
 
 def dechiffre_message_AES(id_envoyeur,message):
-    with open(f'key/AES_key_{id_envoyeur}_ca.bin', 'rb') as AES_key_file:
-        AES_key_file.read()
 
-    with open(f'key/AES_iv_{id_envoyeur}_ca.bin', 'rb') as AES_iv_file:
-        AES_iv_file.read()
+    message = base64.b64decode(message)
+
+    with open(f'key/AES_key_{id_envoyeur}_ca.bin', 'rb') as f:
+        AES_key_file = f.read()
+
+    with open(f'key/AES_iv_{id_envoyeur}_ca.bin', 'rb') as f:
+        AES_iv_file = f.read()
 
     cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
-
     decryptor = cipher.decryptor()
-    message_dechiffre = decryptor.update(message) + decryptor.finalize()
+
+    message = decryptor.update(message) + decryptor.finalize()
+
+    unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
+
+    message_dechiffre =  unpadder.update(message) + unpadder.finalize()
 
     return message_dechiffre
 
