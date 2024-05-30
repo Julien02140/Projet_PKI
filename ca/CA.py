@@ -456,8 +456,7 @@ def dechiffre_message_AES(id_envoyeur,message):
 
     return message_dechiffre
 
-    
- 
+
 generate_certif_ca()
 
 #generer un dossier crl et un fichier vide pour la crl

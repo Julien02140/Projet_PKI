@@ -108,30 +108,31 @@ def on_message(client, userdata, msg):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
 
-            with open(f"key/public_key_{message['id']}.pem", "wb") as f:
+            with open(f"key/public_key_{message['id']}.pem", 'wb') as f:
                 f.write(public_key_pem)
 
             #maintenant on peut envoyer la clé AES chiffré avec la clé publique du vendeur
 
-            with open(f'key/AES_key_client{numero_client}_{message['id']}','rb') as AES_key:
-                AES_key.read()
+            with open(f"key/AES_key_client{numero_client}_{message['id']}.bin",'rb') as f:
+                AES_key = f.read()
 
-            with open(f'key/AES_iv_client{numero_client}_{message['id']}','rb') as AES_iv:
-                AES_iv.read()
+            with open(f"key/AES_iv_client{numero_client}_{message['id']}.bin",'rb') as f:
+                AES_iv = f.read()
 
             AES_key_chiffre = chiffre_message(message['id'],AES_key)
             AES_iv_chiffre = chiffre_message(message['id'],AES_iv)
-            id_chiffre = chiffre_message(message['id'],f'client{numero_client}')                                
 
             message_vendeur = {
                     'type': 'envoie_cle_AES_client',
-                    'id': id_chiffre,
+                    'id': f'client{numero_client}',
                     'AES_key': AES_key_chiffre,
                     'AES_iv': AES_iv_chiffre
             }
 
-            json_data_vendeur = json.dumps(message_vendeur)
-            client.publish(topic_vendeur,json_data_vendeur)    
+            print("Cle AES envoyé au vendeur \n")
+
+        json_data_vendeur = json.dumps(message_vendeur)
+        client.publish(topic_vendeur,json_data_vendeur)
 
         else:
             print("certificat non valide")
@@ -146,17 +147,18 @@ def on_message(client, userdata, msg):
             #le scénario 2 et 3 continue
             #le client demande la crl à la CA
 
-            id_chiffre = chiffre_message_AES('ca',f'client{numero_client}')
-
             message_crl = {
                 'type': 'demande_crl',
-                'id': id_chiffre
+                'id': f'client{numero_client}'
             }
 
-            json_data = json.dumps(message_crl)
-            client.publish(topic_ca, json_data)
-        
+                json_data = json.dumps(message_crl)
+                client.publish(topic_ca, json_data)
 
+        else:
+            print("certificat non valide")
+
+        
 def on_connect(client, userdata, flags, reason_code, properties):
     print("Connecté au broker MQTT avec le code de retour:", reason_code)
     client.subscribe(topic)
@@ -268,6 +270,11 @@ def generate_key():
     with open(f'key/public_key_client{numero_client}.pem', 'wb') as f:
         f.write(public_pem)
 
+    #On part du postula que le vendeur a deja la clé publique du client
+    with open(f'../vendeur/key/public_key_client{numero_client}.pem', 'wb') as f:
+        f.write(public_pem)
+
+
 def chiffre_message(id_receveur,message):
     with open(f'key/public_key_{id_receveur}.pem', 'rb') as f:
         public_key_pem = f.read()
@@ -289,7 +296,7 @@ def chiffre_message(id_receveur,message):
 
     return message_chiffre
 
-def dechiffre_message(message):
+def dechiffre_message(message64):
     with open(f'key/private_key_client{numero_client}.pem', 'rb') as f:
         public_key_pem = f.read()
     
@@ -298,11 +305,13 @@ def dechiffre_message(message):
         password=None,
     )
 
+    message = base64.b64decode(message64)
+
     #dechiffrer le message
     message_dechiffre = private_key.decrypt(
             message,
-            padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            pad.OAEP(
+            mgf=pad.MGF1(algorithm=hashes.SHA256()),
             algorithm=hashes.SHA256(),
             label=None
         )
@@ -350,6 +359,8 @@ def dechiffre_message_AES(id_envoyeur,message):
 # client.publish(topic_ca,json_data)
 
 print(f"client numero : {numero_client} démarre")
+
+generate_key()
 
 # client.loop_start()
 
