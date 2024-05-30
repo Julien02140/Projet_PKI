@@ -78,12 +78,21 @@ def generate_certif_ca():
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
+    if os.path.exists("crl/crl.pem"):
+        os.remove("crl/crl.pem")
+
     if not os.path.exists("certificat"):
         os.makedirs("certificat")
     if not os.path.exists("key"):
         os.makedirs("key")
     if not os.path.exists("pem"):
         os.makedirs("pem")
+
+    if not os.path.exists("../client/key"):
+        os.makedirs("../client/key")
+
+    if not os.path.exists("../vendeur/key"):
+        os.makedirs("../vendeur/key") 
 
     with open(f'certificat/cert_ca.crt', 'wb') as c:
         c.write(my_cert_pem)
@@ -127,8 +136,6 @@ def verify_signature(csr_file):
         return False  # La signature est invalide
 
 def add_certificat_crl(name):
-    if not os.path.exists("crl"):
-        os.makedirs("crl")
 
     crl = None
 

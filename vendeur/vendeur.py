@@ -159,10 +159,10 @@ def generate_csr():
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
-    with open(f"private_key_vendeur{numero_vendeur}.pem", "wb") as f:
+    with open(f"key/private_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(private_key_pem)
 
-    with open(f"public_key_vendeur{numero_vendeur}.pem", "wb") as f:
+    with open(f"key/public_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(public_key_pem)
 
 def generate_key():
@@ -283,6 +283,7 @@ def dechiffre_message_AES(id_envoyeur,message):
 
 client.on_message = on_message
 client.on_connect = on_connect
+
 
 #générer clé publique et privée
 generate_key()

@@ -194,14 +194,6 @@ def verify_certificate(cert):
 client.on_connect = on_connect
 client.on_message = on_message
 
-#création d'un dossier confiance, cela stocke les certificats de confiance.
-if not os.path.exists("trusted"):
-    os.makedirs("trusted")
-
-#création d'un dossier pour les certificats rejetés.
-if not os.path.exists("rejected"):
-    os.makedirs("rejected")
-
 #consulte la crl et regarde si le certificat est révoqué
 def verifier_crl(cert):
     #charger la clé publique de la CA
