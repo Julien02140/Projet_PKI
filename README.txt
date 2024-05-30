@@ -1,7 +1,7 @@
-Pour exécuter et tester les différents scénarios du projet, il faut lancer les commandes suivantes dans 3 terminaux différents, 
+Pour exécuter et tester les différents scénarios du projet, il faut exécuter les commandes suivantes dans 3 terminaux distincts, 
 à la racine du projet :
 
-Terminal 1 : cd CA
+Terminal 1 : cd ca
 Terminal 2 : cd vendeur
 Terminal 3 : cd client
 
