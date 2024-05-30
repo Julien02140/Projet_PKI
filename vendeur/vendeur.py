@@ -2,6 +2,7 @@ import paho.mqtt.client as mqtt
 import paho.mqtt
 import sys, json
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -46,7 +47,7 @@ def on_message(client, userdata, msg):
             contenu = str(f.read())
 
         #chiffrer le csr avec AES
-        contenu_chiffre = chiffre_message_AES(message['id'],contenu)
+        contenu_chiffre = chiffre_message_AES(message['id'],contenu.encode('utf-8'))
 
         reponse = {
             'type': 'demande_certificat',
@@ -61,7 +62,7 @@ def on_message(client, userdata, msg):
 
         print("certificat recu de la part de la CA \n")
         cert = dechiffre_message_AES(message['id'],message['certificat'])
-        cert = eval(cert.decode('utf-8'))
+        cert = eval(cert.encode('utf-8'))
         with open(f"cert_vendeur{numero_vendeur}.pem", "wb") as f:
             f.write(cert)
  
@@ -90,11 +91,11 @@ def on_message(client, userdata, msg):
         AES_key = dechiffre_message(message['AES_key'])
         AES_iv = dechiffre_message(message['AES_iv'])
 
-        with open(f'key/AES_key_vendeur{numero_vendeur}_{id}.bin','wb') as f:
-            f.write(AES_key)
+        with open(f'key/AES_key_vendeur{numero_vendeur}_{id}','rb') as AES_key_file:
+            AES_key_file.write(AES_key)
 
-        with open(f'key/AES_iv_vendeur{numero_vendeur}_{id}.bin','wb') as f:
-            f.write(AES_iv)
+        with open(f'key/AES_iv_vendeur{numero_vendeur}_{id}','rb') as AES_iv_file:
+            AES_iv_file.write(AES_iv)
 
         print(f'cle AES recu de la part du {id}')
 
@@ -158,10 +159,10 @@ def generate_csr():
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
-    with open(f"key/private_key_vendeur{numero_vendeur}.pem", "wb") as f:
+    with open(f"private_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(private_key_pem)
 
-    with open(f"key/public_key_vendeur{numero_vendeur}.pem", "wb") as f:
+    with open(f"public_key_vendeur{numero_vendeur}.pem", "wb") as f:
         f.write(public_key_pem)
 
 def generate_key():
@@ -213,22 +214,20 @@ def chiffre_message_ca(message):
 
     return message_chiffre_base_64
 
-def dechiffre_message(message64):
-    with open(f'key/private_key_vendeur{numero_vendeur}.pem', 'rb') as f:
+def dechiffre_message(message):
+    with open(f'key/private_key_vendeur_{numero_vendeur}', 'rb') as f:
         public_key_pem = f.read()
     
-    private_key = serialization.load_pem_private_key(
+    private_key = serialization.load_pem_public_key(
         public_key_pem,
-        password=None
+        password=None,
     )
-
-    message = base64.b64decode(message64)
 
     #dechiffrer le message
     message_dechiffrer = private_key.decrypt(
             message,
-            pad.OAEP(
-            mgf=pad.MGF1(algorithm=hashes.SHA256()),
+            padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
             algorithm=hashes.SHA256(),
             label=None
         )
@@ -239,9 +238,6 @@ def dechiffre_message(message64):
 def chiffre_message_AES(id_receveur,message):
     #le message doit être en byte pour âtre chiffré
     #ne fonctionne pas avec les strings
-
-    message = message.encode('utf-8')
-
     with open(f'key/AES_key_vendeur{numero_vendeur}_{id_receveur}.bin', 'rb') as f:
         AES_key_file = f.read()
 
@@ -260,29 +256,21 @@ def chiffre_message_AES(id_receveur,message):
     return message_chiffre_base64
 
 def dechiffre_message_AES(id_envoyeur,message):
+    with open(f'key/AES_key_vendeur{numero_vendeur}_{id_envoyeur}.bin', 'rb') as AES_key_file:
+        AES_key_file.read()
 
-    message = base64.b64decode(message)
-    
-    with open(f'key/AES_key_vendeur{numero_vendeur}_{id_envoyeur}.bin', 'rb') as f:
-        AES_key_file = f.read()
-
-    with open(f'key/AES_iv_vendeur{numero_vendeur}_{id_envoyeur}.bin', 'rb') as f:
-        AES_iv_file = f.read()
+    with open(f'key/AES_iv_vendeur{numero_vendeur}{id_envoyeur}.bin', 'rb') as AES_iv_file:
+        AES_iv_file.read()
 
     cipher = Cipher(algorithms.AES(AES_key_file), modes.CBC(AES_iv_file))
+
     decryptor = cipher.decryptor()
-
-    message = decryptor.update(message) + decryptor.finalize()
-
-    unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
-    
-    message_dechiffre =  unpadder.update(message) + unpadder.finalize()
+    message_dechiffre = decryptor.update(message) + decryptor.finalize()
 
     return message_dechiffre
 
 client.on_message = on_message
 client.on_connect = on_connect
-
 
 #générer clé publique et privée
 generate_key()
@@ -300,7 +288,7 @@ with open(f'key/AES_iv_vendeur{numero_vendeur}_ca.bin','wb') as f:
 with open(f'key/AES_key_vendeur{numero_vendeur}_ca.bin',"rb") as f:
     AES_key_vendeur_ca = f.read()
 
-with open(f'key/AES_iv_vendeur{numero_vendeur}_ca.bin',"rb") as f:
+with open(f'key/AES_key_vendeur{numero_vendeur}_ca.bin',"rb") as f:
     AES_iv_vendeur_ca = f.read()
 
 #chiffre la clé AES avec la clé publique de la CA
